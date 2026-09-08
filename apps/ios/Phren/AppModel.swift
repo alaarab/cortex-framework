@@ -128,9 +128,27 @@ final class AppModel {
     /// needs to take its own offline route (see `PhrenCapture`).
     private(set) static weak var current: AppModel?
 
-    init() {
+    struct Credentials {
+        var load: () -> KeychainStore.StoredToken?
+        var save: (KeychainStore.StoredToken) throws -> Void
+        var delete: () -> Void
+        static let keychain = Self(load: KeychainStore.load, save: KeychainStore.save, delete: KeychainStore.delete)
+    }
+
+    init(client: GitHubClient = GitHubClient(), credentials: Credentials = .keychain,
+         storageDefaults: UserDefaults = .standard, storeDirectory: URL? = nil) {
+        self.client = client
+        self.credentials = credentials
+        self.storageDefaults = storageDefaults
+        self.storeDirectory = storeDirectory
         Self.current = self
     }
+
+    private let credentials: Credentials
+    private let storageDefaults: UserDefaults
+    private let storeDirectory: URL?
+    private var authenticationGeneration = UUID()
+    private(set) var authenticationMessage: String?
 
     /// Deterministic, isolated simulator data for the native interaction suite.
     /// This entry point is absent from every device and Release build.
@@ -193,7 +211,7 @@ final class AppModel {
     /// so a ~7s refresh doesn't re-send an unchanged one.
     private var appliedJournalRouting: [String: Bool] = [:]
 
-    let client = GitHubClient()
+    let client: GitHubClient
 
     private static let storesDefaultsKey = "phren.stores"
     private static let legacyRepoDefaultsKey = "phren.selected-repo"
@@ -530,46 +548,39 @@ final class AppModel {
             return
         }
         #endif
-        guard let stored = KeychainStore.load() else {
+        guard let stored = credentials.load() else {
             phase = .signedOut
             return
         }
         await client.setToken(stored.token)
-        do {
-            user = try await client.currentUser()
-        } catch {
-            KeychainStore.delete()
-            phase = .signedOut
-            return
-        }
+        user = stored.user
 
-        let descriptors = loadDescriptors()
-        guard !descriptors.isEmpty else {
-            phase = .pickingRepo
-            return
-        }
-        for descriptor in descriptors {
+        await openSavedStores()
+        // Local data and navigation are available even while /user is stalled.
+        guard await refreshAccount() else { return }
+        await refreshStorePermissions()
+        await pullAllAndGoLive()
+    }
+
+    private func openSavedStores() async {
+        for descriptor in loadDescriptors() where !storeContexts.contains(where: { $0.id == descriptor.id }) {
             await openContext(descriptor)
         }
         // openContext can fail (LocalStore init) for every descriptor — never
         // strand the user in an empty tab view with no way back. Mirrors the
         // same guard in addStore().
-        phase = storeContexts.isEmpty ? .pickingRepo : .ready
-        // Render the cached copy instantly; the pull refreshes it right after.
         await refresh()
-        await refreshStorePermissions()
-        await pullAllAndGoLive()
+        phase = storeContexts.isEmpty ? .pickingRepo : .ready
     }
 
-    private func loadDescriptors() -> [StoreDescriptor] { Self.storedDescriptors() }
+    private func loadDescriptors() -> [StoreDescriptor] { Self.storedDescriptors(defaults: storageDefaults) }
 
-    private func persistDescriptors(_ descriptors: [StoreDescriptor]) { Self.persist(descriptors) }
+    private func persistDescriptors(_ descriptors: [StoreDescriptor]) { Self.persist(descriptors, defaults: storageDefaults) }
 
     /// The attached-store registry, readable without a bootstrapped model —
     /// an App Intent cold-launched in the background has no `storeContexts`
     /// yet but still needs to know which stores exist and which are writable.
-    static func storedDescriptors() -> [StoreDescriptor] {
-        let defaults = UserDefaults.standard
+    static func storedDescriptors(defaults: UserDefaults = .standard) -> [StoreDescriptor] {
         // A registry that can't be decoded is set aside rather than replaced,
         // so a user thrown back to the repo picker at least hears why.
         if let list = PersistedState.load(StoreRegistry.self, fromDefaults: defaults,
@@ -582,21 +593,22 @@ final class AppModel {
         if let legacy = PersistedState.load(StoreDescriptor.self, fromDefaults: defaults,
                                             key: legacyRepoDefaultsKey,
                                             document: storeRegistryDocumentName).value {
-            persist([legacy])
+            persist([legacy], defaults: defaults)
             defaults.removeObject(forKey: legacyRepoDefaultsKey)
             return [legacy]
         }
         return []
     }
 
-    private static func persist(_ descriptors: [StoreDescriptor]) {
-        PersistedState.save(StoreRegistry(items: descriptors), toDefaults: .standard,
+    private static func persist(_ descriptors: [StoreDescriptor], defaults: UserDefaults = .standard) {
+        PersistedState.save(StoreRegistry(items: descriptors), toDefaults: defaults,
                             key: storesDefaultsKey, document: storeRegistryDocumentName)
     }
 
     func enterForeground() async {
         guard phase == .ready else { return }
         await startLiveAll()
+        await refreshAccount()
     }
 
     func enterBackground() async {
@@ -635,25 +647,65 @@ final class AppModel {
 
     // MARK: - Auth
 
+    /// Only an explicit credential rejection invalidates a saved sign-in.
+    /// Offline, timeout, cancellation, throttling and server errors leave it
+    /// intact; the existing sync loop retries when connectivity returns.
+    @discardableResult
+    private func refreshAccount() async -> Bool {
+        guard let stored = credentials.load() else { return false }
+        let generation = authenticationGeneration
+        do {
+            let verified = try await client.currentUser()
+            guard generation == authenticationGeneration else { return false }
+            user = verified
+            // Metadata caching is best effort. A failed save retains the old token.
+            try? credentials.save(.init(token: stored.token, kind: stored.kind, user: verified))
+            appliedJournalRouting.removeAll()
+            await applyWriteContexts()
+        } catch GitHubError.http(status: 401, message: _, method: _, path: _) {
+            guard generation == authenticationGeneration else { return false }
+            let invalidation = UUID()
+            authenticationGeneration = invalidation
+            credentials.delete()
+            await client.setToken(nil)
+            await enterBackground()
+            guard invalidation == authenticationGeneration else { return false }
+            authenticationMessage = "GitHub no longer accepts your sign-in. Sign in again to reconnect. Your saved projects and pending changes are still here."
+            phase = .signedOut
+            return false
+        } catch {
+            // A failed request says nothing about whether the token is valid.
+        }
+        return generation == authenticationGeneration
+    }
+
     func signIn(token: String, kind: KeychainStore.TokenKind) async throws {
+        let generation = UUID()
+        authenticationGeneration = generation
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         await client.setToken(trimmed)
         let user = try await client.currentUser()
-        try KeychainStore.save(.init(token: trimmed, kind: kind))
+        guard generation == authenticationGeneration else { throw CancellationError() }
+        try credentials.save(.init(token: trimmed, kind: kind, user: user))
         self.user = user
-        phase = .pickingRepo
+        authenticationMessage = nil
+        appliedJournalRouting.removeAll()
+        await openSavedStores()
+        await pullAllAndGoLive()
     }
 
     func signOut() async {
+        authenticationGeneration = UUID()
         for context in storeContexts {
             await context.engine.stopLive()
             try? await context.store.wipe()
         }
-        KeychainStore.delete()
-        UserDefaults.standard.removeObject(forKey: Self.storesDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: Self.legacyRepoDefaultsKey)
+        credentials.delete()
+        storageDefaults.removeObject(forKey: Self.storesDefaultsKey)
+        storageDefaults.removeObject(forKey: Self.legacyRepoDefaultsKey)
         await client.setToken(nil)
         user = nil
+        authenticationMessage = nil
         storeContexts = []
         storeFilter = nil
         storesManifest = StoresManifest()
@@ -720,7 +772,8 @@ final class AppModel {
 
     private func openContext(_ descriptor: StoreDescriptor) async {
         do {
-            let directory = LocalStore.defaultDirectory(owner: descriptor.owner, repo: descriptor.name)
+            let directory = storeDirectory?.appendingPathComponent(descriptor.id, isDirectory: true)
+                ?? LocalStore.defaultDirectory(owner: descriptor.owner, repo: descriptor.name)
             let store = try LocalStore(rootDirectory: directory, owner: descriptor.owner,
                                        repo: descriptor.name, branch: descriptor.branch)
             let engine = SyncEngine(client: client, store: store, stateDirectory: directory)
@@ -808,6 +861,7 @@ final class AppModel {
     }
 
     func pullToRefresh() async {
+        guard await refreshAccount() else { return }
         await pullAll()
         await refreshStorePermissions()
         await refresh()

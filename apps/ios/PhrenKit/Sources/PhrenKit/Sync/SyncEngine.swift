@@ -64,6 +64,7 @@ public actor SyncEngine {
     private var writeContext = WriteContext()
     private var liveTask: Task<Void, Never>?
     private var flushTask: Task<Void, Never>?
+    private var enqueueGeneration = 0
     private var pullTask: Task<Void, Never>?
     private var pullGeneration = 0
     /// Tests drive `flushNow()` by hand so a background flush can't push the
@@ -142,7 +143,12 @@ public actor SyncEngine {
 
     private func performPull(force: Bool, overwritingPendingPaths: Set<String>) async {
         setStatus { $0.isSyncing = true; $0.lastError = nil }
-        defer { setStatus { $0.isSyncing = false } }
+        defer {
+            setStatus { $0.isSyncing = false }
+            // An unchanged head still needs to retry edits queued offline.
+            // Retry once per sync pass, including 304 responses.
+            if !queue.pending.isEmpty { scheduleFlush() }
+        }
 
         do {
             let manifest = await store.currentManifest
@@ -211,10 +217,6 @@ public actor SyncEngine {
             if changed { notify() }
         } catch {
             setStatus { $0.lastError = error.localizedDescription }
-        }
-
-        if !queue.pending.isEmpty {
-            scheduleFlush()
         }
     }
 
@@ -317,6 +319,7 @@ public actor SyncEngine {
         queued.paths = applied.paths
         queued.deletedShas = applied.deletedShas.isEmpty ? nil : applied.deletedShas
         queue.pending.append(queued)
+        enqueueGeneration += 1
         persistQueue()
         setStatus { _ in }
         scheduleFlush()
@@ -328,6 +331,7 @@ public actor SyncEngine {
     /// as it stands, so without this the retry would commit nothing for it.
     /// Ops parked with their edit already in place are simply re-queued.
     public func retryFailed() async {
+        enqueueGeneration += 1
         let retrying = queue.failed
         queue.failed.removeAll()
         for var queued in retrying {
@@ -368,17 +372,20 @@ public actor SyncEngine {
 
     private func scheduleFlush() {
         guard autoFlush, flushTask == nil else { return }
+        let generation = enqueueGeneration
         flushTask = Task { [weak self] in
             await self?.flush()
-            await self?.clearFlushTask()
+            await self?.clearFlushTask(generation: generation)
         }
     }
 
-    private func clearFlushTask() {
+    private func clearFlushTask(generation: Int) {
         flushTask = nil
         // An op enqueued in the window between `flush` returning and this
         // running would otherwise sit until the next poll.
-        if !queue.pending.isEmpty { scheduleFlush() }
+        // Old pending work may have just failed because we're offline. Only
+        // newly enqueued work warrants another immediate pass.
+        if enqueueGeneration != generation, !queue.pending.isEmpty { scheduleFlush() }
     }
 
     /// Runs a flush pass to completion, awaiting one already in flight.

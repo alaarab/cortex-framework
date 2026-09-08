@@ -29,9 +29,23 @@ schemes:
         Phren: all
     test:
       targets:
+        - PhrenTests
         - PhrenUITests
 
 targets:
+  PhrenTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PhrenTests
+    dependencies:
+      - target: Phren
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.phren.ios.tests
+        GENERATE_INFOPLIST_FILE: true
+        SWIFT_VERSION: "5.9"
+
   PhrenUITests:
     type: bundle.ui-testing
     platform: iOS

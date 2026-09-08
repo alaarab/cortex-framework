@@ -19,9 +19,13 @@ public enum KeychainStore {
     public struct StoredToken: Codable, Equatable, Sendable {
         public let token: String
         public let kind: TokenKind
-        public init(token: String, kind: TokenKind) {
+        /// Last verified identity, bound to this credential for offline startup.
+        /// Optional so tokens saved by older builds still decode.
+        public let user: GitHubUser?
+        public init(token: String, kind: TokenKind, user: GitHubUser? = nil) {
             self.token = token
             self.kind = kind
+            self.user = user
         }
     }
 
@@ -33,11 +37,15 @@ public enum KeychainStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
-        var attributes = query
-        attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(attributes as CFDictionary, nil)
+        // An interrupted/failed refresh must not erase the working credential.
+        var status = SecItemUpdate(query as CFDictionary,
+                                   [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var attributes = query
+            attributes[kSecValueData as String] = data
+            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(attributes as CFDictionary, nil)
+        }
         guard status == errSecSuccess else {
             throw PhrenKitError.validation("Keychain save failed (\(status)).")
         }

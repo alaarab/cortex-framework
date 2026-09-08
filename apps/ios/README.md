@@ -127,6 +127,15 @@ Reads: `GET git/ref/heads/<branch>` with an `If-None-Match` ETag (304s don't
 count against the rate limit) → on change, recursive tree → fetch only changed
 blobs. Live mode polls every ~7s while foregrounded.
 
+Startup opens saved stores and cached content before checking GitHub. Losing
+reception, timeouts, rate limits and server errors preserve the Keychain token;
+foreground sync retries when the connection returns. The last verified GitHub
+identity is cached with that token for offline attribution. Only a GitHub 401
+requires signing in again, and reconnecting restores the attached stores and
+pending edits. Failed writes wait for the next sync attempt, including polls
+where the remote head is unchanged. Explicit **Sign out** still removes local data. `PhrenTests`
+exercises actual app startup with stalled/failed requests and isolated storage.
+
 #### Cold tier — catalogued, hydrated on demand
 
 Once a project passes its findings cap, the CLI's `autoArchiveToReference`

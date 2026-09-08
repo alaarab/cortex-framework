@@ -44,7 +44,7 @@ struct WelcomeView: View {
                 .multilineTextAlignment(.center)
             TypewriterFindingCard()
                 .padding(.top, 4)
-            Text("Connect GitHub to open your phren store. Your access token stays in this device's Keychain.")
+            Text(model.authenticationMessage ?? "Connect GitHub to open your phren store. Your access token stays in this device's Keychain.")
                 .font(.footnote)
                 .foregroundStyle(PhrenTheme.textMuted)
                 .multilineTextAlignment(.center)
