@@ -1,6 +1,80 @@
 import XCTest
 
 final class AgentChatTests: XCTestCase {
+    @MainActor
+    func testHerdrWorkspaceBrowserAndNamedServerSelection() {
+        let app = launch()
+        app.buttons["Herdr workspaces & terminal"].tap()
+        XCTAssertTrue(app.navigationBars["Herdr"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Phone work"].waitForExistence(timeout: 8))
+        capture(app, "Herdr workspace browser")
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Herdr server")).firstMatch.tap()
+        app.buttons["work"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Herdr server", "work")).firstMatch.waitForExistence(timeout: 8))
+        app.buttons["Open Herdr terminal"].tap()
+        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Test Mac · work"].waitForExistence(timeout: 8))
+    }
+    @MainActor
+    func testInlineApprovalAndQuestionAnswers() {
+        var app = launch(extra: ["--chat-approval"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 8))
+        capture(app, "Inline approval in Phren")
+        app.buttons["Approve"].tap()
+        XCTAssertTrue(app.staticTexts["Answer received in this conversation."].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Approve"].exists)
+        app.terminate()
+        app = launch(extra: ["--chat-question"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.buttons["Send answer"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Send answer"].isEnabled)
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Keep the Phren accent")).firstMatch.tap()
+        capture(app, "Inline question in Phren")
+        app.buttons["Send answer"].tap()
+        XCTAssertTrue(app.staticTexts["Answer received in this conversation."].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
+    func testHistoricalImageDiffAndNativeHerdrNavigation() {
+        let app = launch(extra: ["--chat-historical-image"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.buttons["View conversation image"].waitForExistence(timeout: 8))
+        app.buttons["View conversation image"].tap()
+        XCTAssertTrue(app.navigationBars["Conversation image.jpg"].waitForExistence(timeout: 5))
+        app.navigationBars["Conversation image.jpg"].buttons["Done"].tap()
+        app.buttons["Chat options"].tap()
+        app.buttons["Repository changes"].tap()
+        XCTAssertTrue(app.staticTexts["Theme.swift"].waitForExistence(timeout: 5))
+        app.staticTexts["Theme.swift"].tap()
+        capture(app, "Native repository diff")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "+let accent = cyan")).firstMatch.exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["Chat options"].tap()
+        app.buttons["Herdr terminal"].tap()
+        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Toggle terminal keyboard"].waitForExistence(timeout: 8))
+        capture(app, "Native Herdr terminal")
+    }
+
+    @MainActor
+    func testDraftAndAttachmentSurviveProcessRelaunch() {
+        var app = launch(extra: ["--chat-persistent-draft", "--chat-clear-drafts"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        attachImage(app)
+        composer.tap(); composer.typeText("Keep this across relaunch")
+        app.terminate()
+        app = launch(extra: ["--chat-persistent-draft"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let restored = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 8))
+        XCTAssertEqual(restored.value as? String, "Keep this across relaunch")
+        XCTAssertTrue(app.buttons["Preview Screenshot.png"].waitForExistence(timeout: 8))
+        capture(app, "Draft restored after process relaunch")
+    }
     /// Seed this simulator with `xcrun simctl addmedia <device> <test-image>`.
     @MainActor
     func testSystemPhotoPickerPreparesAnAttachment() throws {
@@ -164,7 +238,7 @@ final class AgentChatTests: XCTestCase {
     func testBlockedAgentRequiresTerminalAndCannotSend() {
         let app = launch(extra: ["--chat-blocked"])
         app.buttons["live-chat:w7:w7:t9"].tap()
-        XCTAssertTrue(app.staticTexts["The agent needs an approval or answer in the terminal."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["chat-answer-terminal"].waitForExistence(timeout: 5))
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         composer.tap(); composer.typeText("Keep this for later")
         XCTAssertFalse(app.buttons["chat-send"].isEnabled)

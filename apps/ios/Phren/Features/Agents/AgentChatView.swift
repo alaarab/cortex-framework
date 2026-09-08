@@ -79,6 +79,7 @@ struct AgentChatView: View {
             }
             .font(.caption).foregroundStyle(PhrenTheme.textMuted).padding(.horizontal, 18).padding(.vertical, 10)
             .accessibilityIdentifier("chat-location")
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -87,7 +88,7 @@ struct AgentChatView: View {
                         if model.target == nil && !model.loading {
                             Text("Choose an agent").font(.title2.weight(.semibold))
                             ForEach(model.panes) { pane in
-                                if (try? pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id)) != nil {
+                                if (try? pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id, muxID: session.host.muxID)) != nil {
                                     Button {
                                         model.choose(pane, session: session); refresh = UUID()
                                     } label: {
@@ -119,7 +120,22 @@ struct AgentChatView: View {
                         ForEach(model.messages) { message in
                             ChatMessageRow(message: message, images: model.sentImages.filter { item in
                                 message.role == .user && item.path.map { message.text.contains($0) } == true
-                            }, preview: { previewImage = $0 }).id(message.id)
+                            }, preview: { previewImage = $0 }, historical: {
+                                if let target = model.target {
+                                    ForEach(message.imageBlocks, id: \.self) { block in
+                                        ChatHistoricalImage(session: session, target: target, line: message.line, block: block, active: active, preview: { previewImage = $0 })
+                                    }
+                                }
+                            }).id(message.id)
+                        }
+                        if let prompt = model.question, model.needsAnswer {
+                            ChatQuestionCard(prompt: prompt, busy: model.answering || !active || !model.connected) { selections in
+                                sendTask = Task { await model.answer(session, question: prompt, selections: selections) }
+                            }.id(prompt.id)
+                        } else if let approval = model.approval {
+                            ChatApprovalCard(approval: approval, busy: model.answering || !active || !model.interactionConnected) { approve in
+                                sendTask = Task { await model.answer(session, approval: approval, approve: approve) }
+                            }.id(approval.id)
                         }
                         if model.connected && model.messages.isEmpty { Text("Ready for your message.").foregroundStyle(PhrenTheme.textMuted).padding(.top, 40) }
                         GeometryReader { geometry in
@@ -149,6 +165,7 @@ struct AgentChatView: View {
                 }
             }
             composer
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         }
         .background(PhrenTheme.bg)
         .navigationTitle("Agent chat")
@@ -156,6 +173,11 @@ struct AgentChatView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target) } label: { Label("Herdr terminal", systemImage: "terminal") }
+                    NavigationLink { HerdrWorkspacesView(hostID: session.host.id) } label: { Label("Herdr workspaces", systemImage: "rectangle.split.3x1") }
+                    if let target = model.target {
+                        NavigationLink { AgentDiffView(session: session, target: target) } label: { Label("Repository changes", systemImage: "arrow.triangle.branch") }
+                    }
                     if let destination = try? session.link().url() {
                         Link("Open terminal in Moshi", destination: destination)
                     }
@@ -170,7 +192,7 @@ struct AgentChatView: View {
                     if project != nil {
                         Button("Add project context", systemImage: "brain") { showingContext = true }
                     }
-                    if model.panes.filter({ (try? $0.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id)) != nil }).count > 1 {
+                    if model.panes.filter({ (try? $0.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id, muxID: session.host.muxID)) != nil }).count > 1 {
                         Button("Choose another agent") {
                             model.chooseAnother()
                             refresh = UUID()
@@ -261,9 +283,13 @@ struct AgentChatView: View {
                 }
             }
             if model.needsAnswer {
-                Text("The agent needs an approval or answer in the terminal.").font(.caption).foregroundStyle(PhrenTheme.warning)
+                NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target) } label: {
+                    Label(model.approval != nil || model.question != nil ? "Or answer in Herdr" : "Answer in Herdr terminal", systemImage: "terminal")
+                        .font(.caption).foregroundStyle(PhrenTheme.warning)
+                }.accessibilityIdentifier("chat-answer-terminal")
             }
             if let error = model.deliveryError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-delivery-error") }
+            if let error = model.draftStorageError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-draft-storage-error") }
             HStack(alignment: .bottom, spacing: 10) {
                     Button { showingAttachments = true } label: {
                         Image(systemName: "plus").font(.system(size: 20)).frame(width: 32, height: 44)
@@ -296,7 +322,7 @@ struct AgentChatView: View {
     }
     private struct RunIdentity: Equatable { let active: Bool; let refresh: UUID }
     private var canSend: Bool {
-        active && model.connected && !model.sending && !model.stopping && !model.needsAnswer
+        active && model.connected && !model.sending && !model.stopping && !model.answering && !model.needsAnswer && model.approval == nil
             && (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.attachments.isEmpty)
     }
 }
@@ -306,10 +332,11 @@ private struct ChatBottomPosition: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
-private struct ChatMessageRow: View {
+private struct ChatMessageRow<Historical: View>: View {
     let message: AgentChatMessage
     let images: [ChatAttachmentDraft]
     let preview: (ChatAttachmentDraft) -> Void
+    @ViewBuilder let historical: () -> Historical
     private var displayText: String {
         let marker = "\n\nAttached files on this computer:\n"
         guard !images.isEmpty, let section = message.text.range(of: marker, options: .backwards) else { return message.text }
@@ -342,7 +369,8 @@ private struct ChatMessageRow: View {
                             }.accessibilityLabel("View attached \(item.attachment.name)")
                         }
                     }
-                    if !displayText.isEmpty { ChatRichText(text: displayText) }
+                    historical()
+                    if !displayText.isEmpty && !(displayText == "[Image attachment]" && !message.imageBlocks.isEmpty) { ChatRichText(text: displayText) }
                 }
                 .padding(14)
                 .background(message.role == .user ? PhrenTheme.cyan.opacity(0.10) : PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 18))

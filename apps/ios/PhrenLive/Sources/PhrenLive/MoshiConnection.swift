@@ -41,6 +41,7 @@ public enum MoshiConnection {
     static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey, request: GatewayRequest = .workspaces,
                           receive: (@Sendable (Data) throws -> Void)? = nil) async throws -> Data {
         try host.validate()
+        let request = request.scoped(to: host)
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let result = loop.makePromise(of: Data.self)
         let exchange = Exchange(result: result)
@@ -224,11 +225,11 @@ final class GatewayResponse: ChannelInboundHandler {
                 exchange.finish(.failure(LiveConnectionError.response(Int(head.status.code)))); return
             }
             receivedHead = true
-            if let length = head.headers.first(name: "content-length"), let size = Int(length), size > 1_048_576 {
+            if let length = head.headers.first(name: "content-length"), let size = Int(length), size > request.maximumResponseBytes {
                 exchange.finish(.failure(LiveConnectionError.oversized))
             }
         case .body(let bytes):
-            guard receivedHead, body.count + bytes.readableBytes <= 1_048_576 else {
+            guard receivedHead, body.count + bytes.readableBytes <= request.maximumResponseBytes else {
                 exchange.finish(.failure(LiveConnectionError.oversized)); return
             }
             body.append(contentsOf: bytes.readableBytesView)

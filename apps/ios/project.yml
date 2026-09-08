@@ -18,6 +18,9 @@ packages:
     path: PhrenKit
   PhrenLive:
     path: PhrenLive
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    exactVersion: 1.20.0
 
 schemes:
   Phren:
@@ -57,6 +60,7 @@ targets:
     dependencies:
       - package: PhrenKit
       - package: PhrenLive
+      - package: SwiftTerm
       - target: PhrenWidgets
         embed: true
     preBuildScripts:

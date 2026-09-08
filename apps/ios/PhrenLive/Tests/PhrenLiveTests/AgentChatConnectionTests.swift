@@ -10,6 +10,104 @@ import XCTest
 @testable import PhrenLive
 
 final class AgentChatConnectionTests: XCTestCase {
+    func testNamedHerdrTerminalAndWorkspaceControlsThroughPinnedSSH() async throws {
+        guard ProcessInfo.processInfo.environment["PHREN_HERDR_FIXTURE"] == "phren-phone-fixture" else { throw XCTSkip("Requires our isolated Herdr server") }
+        let server = try await ChatRelaySSH.start()
+        defer { Task { try await server.close() } }
+        var host = try server.host(); host.herdrSession = "phren-phone-fixture"
+        let key = server.deviceKey.rawRepresentation
+        let muxes = try await MoshiConnection.herdrServers(host: host, privateKey: key)
+        XCTAssertTrue(muxes.contains { $0.id == host.muxID })
+        let before = try await MoshiConnection.fetch(host: host, privateKey: key)
+        let label = "Phren SSH " + UUID().uuidString
+        try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .create, label: label, cwd: "/tmp/phren-herdr-integration-fixture/repo")
+        let created = try await MoshiConnection.fetch(host: host, privateKey: key)
+        let group = try XCTUnwrap(created.groups.first { !before.groups.map(\.id).contains($0.id) })
+        defer { Task { try? await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .close, workspaceID: group.id) } }
+        XCTAssertEqual(group.label, label)
+        let tab = try XCTUnwrap(group.children.first)
+        try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .rename, workspaceID: group.id, label: "Renamed phone fixture")
+        let renamed = try await MoshiConnection.fetch(host: host, privateKey: key)
+        XCTAssertEqual(renamed.groups.first { $0.id == group.id }?.label, "Renamed phone fixture")
+        let panes = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: group.id, tabID: tab.id)
+        let pane = try XCTUnwrap(panes.panes.first)
+        try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .focus, workspaceID: group.id, tabID: tab.id, paneID: pane.id)
+        let socket = HerdrTerminalSocket()
+        let ready = expectation(description: "Native PTY output"), echoed = expectation(description: "Input reached our shell")
+        let marker = "PHREN_PTY_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let reader = Task {
+            var received = false, didEcho = false, text = ""
+            do {
+                for try await bytes in MoshiConnection.herdrTerminal(host: host, privateKey: key, socket: socket) {
+                    text += String(decoding: bytes, as: UTF8.self)
+                    if !received { received = true; ready.fulfill() }
+                    if text.contains(marker), !didEcho { didEcho = true; echoed.fulfill() }
+                    try await socket.acknowledge(bytes.count)
+                }
+            } catch { if !Task.isCancelled { XCTFail("PTY failed: \(error)") } }
+        }
+        defer { reader.cancel() }
+        await fulfillment(of: [ready], timeout: 10)
+        try await socket.resize(columns: 72, rows: 30)
+        // Only the workspace created above receives shell input.
+        try await socket.input("printf 'PHREN_PTY_%s\\n' '\(marker.dropFirst(10))'\r")
+        await fulfillment(of: [echoed], timeout: 10)
+        reader.cancel(); await reader.value
+        let afterDetach = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: group.id, tabID: tab.id)
+        XCTAssertTrue(afterDetach.panes.contains { $0.id == pane.id }, "Disconnect must preserve the shell")
+        try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .close, workspaceID: group.id)
+        let closed = try await MoshiConnection.fetch(host: host, privateKey: key)
+        XCTAssertFalse(closed.groups.contains { $0.id == group.id })
+        try await server.close()
+    }
+
+    func testRealHistoricalBlobAndIndependentRepositoryDiffSessions() async throws {
+        guard let repo = ProcessInfo.processInfo.environment["PHREN_HERDR_FIXTURE_REPO"] else { throw XCTSkip("Requires the isolated repository fixture") }
+        let server = try await ChatRelaySSH.start()
+        defer { Task { try await server.close() } }
+        let host = try server.host(), key = server.deviceKey
+        let start = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: "/v1/diff/start", body: JSONSerialization.data(withJSONObject: ["cwd": repo])))
+        let path = try AgentRepositoryDiff.statusPath(start)
+        let data = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: path, maximumResponseBytes: 8_388_608))
+        let diff = try AgentRepositoryDiff.read(data)
+        XCTAssertTrue(diff.files.contains { $0.path == "example.txt" })
+        XCTAssertTrue(diff.files.flatMap(\.sections).contains { $0.patch?.contains("Changed from the phone fixture") == true })
+        _ = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: "/v1/diff/start", body: JSONSerialization.data(withJSONObject: ["cwd": "/Users/squidbot/Projects/phren"])))
+        let still = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: path, maximumResponseBytes: 8_388_608))
+        XCTAssertEqual(try AgentRepositoryDiff.read(still).root, diff.root)
+
+        let id = UUID().uuidString.lowercased()
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions/2026/09/08")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let transcript = folder.appendingPathComponent("rollout-2026-09-08T00-00-00-\(id).jsonl")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        let image = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ioAAAAASUVORK5CYII="))
+        let records: [[String: Any]] = [
+            ["type": "session_meta", "payload": ["id": id, "cwd": repo, "timestamp": "2026-09-08T00:00:00Z"]],
+            ["type": "response_item", "payload": ["type": "message", "role": "user", "content": [["type": "input_text", "text": "Fixture image"], ["type": "input_image", "image_url": "data:image/png;base64," + image.base64EncodedString()]]]]
+        ]
+        try Data(records.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n").appending("\n").utf8).write(to: transcript)
+        let target = try AgentChatTarget(hostID: host.id, workspaceID: "w1", tabID: "w1:t1", paneID: "w1:p1", source: "codex", sessionID: id)
+        let downloaded = try await MoshiConnection.transcriptImage(host: host, privateKey: key.rawRepresentation, target: target, line: 1, block: 1)
+        XCTAssertEqual(downloaded, image)
+        let stale = try JSONSerialization.data(withJSONObject: ["source": "codex", "sessionId": id, "actionId": "not-a-real-approval", "decision": "approve"])
+        do {
+            _ = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: "/v1/approvals/answer", body: stale))
+            XCTFail("A missing approval must fail closed")
+        } catch { XCTAssertEqual(error as? LiveConnectionError, .response(409)) }
+        try await server.close()
+    }
+
+    func testNamedServerIsolationBeforeTransportAndWorkspaceQueryScoping() async throws {
+        var host = try LiveHost(name: "Fixture", address: "fixture.invalid", username: "fixture")
+        host.herdrSession = "work"
+        let target = try AgentChatTarget(hostID: host.id, workspaceID: "w1", tabID: "w1:t1", paneID: "w1:p1", source: "codex", sessionID: "fixture")
+        do { _ = try await MoshiConnection.transcriptImage(host: host, privateKey: Data(), target: target, line: 0, block: 0); XCTFail("Must reject a different Herdr server") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("another computer or Herdr server")) }
+        let scoped = GatewayRequest.panes("w1", "w1:t1").scoped(to: host)
+        XCTAssertEqual(URLComponents(string: scoped.path)?.queryItems?.first { $0.name == "mux" }?.value, "herdr:work")
+    }
+
     func testInstalledHelperStreamsHistoryUploadsAndStopsFixture() async throws {
         guard let path = ProcessInfo.processInfo.environment["PHREN_CHAT_ITERATION_FIXTURE"] else { throw XCTSkip("Requires the inert upload/stream/stop fixture") }
         let metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: String])

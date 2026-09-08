@@ -43,13 +43,14 @@ public struct DiscoveredMoshiSession: Equatable, Identifiable, Sendable {
         public let hostID: UUID
         public let workspace: String
         public let tab: String
+        public var muxID: String = "herdr:default"
     }
     public let host: LiveHost
     public let workspaceID: String
     public let workspaceName: String
     public let workspaceTabCount: Int?
     public let tab: MoshiWorkspaces.Tab
-    public var id: ID { ID(hostID: host.id, workspace: workspaceID, tab: tab.id) }
+    public var id: ID { ID(hostID: host.id, workspace: workspaceID, tab: tab.id, muxID: host.muxID) }
 
     public func matches(_ query: String, projectName: String? = nil) -> Bool {
         let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
@@ -72,7 +73,7 @@ public struct DiscoveredMoshiSession: Equatable, Identifiable, Sendable {
         // On a one-tab workspace the workspace identifies the entire target.
         // Avoid Moshi's extra tab-refinement transition after resuming a card.
         // Unknown counts retain exact tab selection; never infer from the label.
-        return try MoshiSessionLink(multiplexer: .herdr, session: "", workspace: workspaceID,
+        return try MoshiSessionLink(multiplexer: .herdr, session: host.herdrSession == "default" ? "" : host.herdrSession ?? "", workspace: workspaceID,
                                     tab: workspaceTabCount == 1 ? "" : tab.id)
     }
 

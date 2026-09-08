@@ -9,14 +9,16 @@ public struct AgentChatTarget: Equatable, Hashable, Sendable, Identifiable {
     public let paneID: String
     public let source: String
     public let sessionID: String
-    public var id: String { [hostID.uuidString, workspaceID, tabID, paneID, source, sessionID].joined(separator: "/") }
+    public let muxID: String
+    public var id: String { [hostID.uuidString, muxID, workspaceID, tabID, paneID, source, sessionID].joined(separator: "/") }
 
-    public init(hostID: UUID, workspaceID: String, tabID: String, paneID: String, source: String, sessionID: String) throws {
-        guard [workspaceID, tabID, paneID, sessionID].allSatisfy(Self.validID), ["codex", "claude"].contains(source) else {
+    public init(hostID: UUID, workspaceID: String, tabID: String, paneID: String, source: String, sessionID: String, muxID: String = "herdr:default") throws {
+        guard [workspaceID, tabID, paneID, sessionID, muxID].allSatisfy(Self.validID), muxID.hasPrefix("herdr:"), ["codex", "claude"].contains(source) else {
             throw PhrenKitError.validation("Native chat needs a recognized Codex or Claude Code conversation in this pane.")
         }
         self.hostID = hostID; self.workspaceID = workspaceID; self.tabID = tabID
         self.paneID = paneID; self.source = source; self.sessionID = sessionID
+        self.muxID = muxID
     }
 
     public static func validID(_ value: String) -> Bool {
@@ -36,9 +38,9 @@ public struct AgentChatPanes: Decodable, Equatable, Sendable {
         public let cwd: String?
         public var displayTitle: String { title?.isEmpty == false ? title! : label }
         public var needsAnswer: Bool { ["blocked", "waiting"].contains(agentStatus ?? "") }
-        public func target(hostID: UUID, workspaceID: String, tabID: String) throws -> AgentChatTarget {
+        public func target(hostID: UUID, workspaceID: String, tabID: String, muxID: String = "herdr:default") throws -> AgentChatTarget {
             try AgentChatTarget(hostID: hostID, workspaceID: workspaceID, tabID: tabID,
-                                paneID: id, source: agent ?? "", sessionID: sessionId ?? "")
+                                paneID: id, source: agent ?? "", sessionID: sessionId ?? "", muxID: muxID)
         }
     }
     public let kind: String
@@ -77,6 +79,7 @@ public struct AgentChatMessage: Equatable, Sendable, Identifiable {
     public let role: Role
     public let title: String?
     public let text: String
+    public var imageBlocks: [Int] = []
 }
 
 /// Normalize only visible conversation content. Encrypted reasoning, system
@@ -88,6 +91,7 @@ public struct AgentChatTranscript: Equatable, Sendable {
     public let hasMore: Bool
     public let totalLines: Int
     public let startLine: Int?
+    public var questionEvents: [AgentQuestionEvent] = []
 
     public static func read(_ data: Data, source: String) throws -> Self {
         guard ["codex", "claude"].contains(source), data.count <= 8_388_608,
@@ -97,23 +101,25 @@ public struct AgentChatTranscript: Equatable, Sendable {
             throw PhrenKitError.validation("The computer returned an unsupported chat transcript.")
         }
         var messages: [AgentChatMessage] = []
+        var questionEvents: [AgentQuestionEvent] = []
         var seen: Set<String> = []
         for entry in entries {
             guard let line = entry["line"] as? Int, line >= 0, let raw = entry["raw"] as? [String: Any] else { continue }
+            questionEvents += AgentQuestionEvent.read(raw, source: source)
             let parts = source == "codex" ? codex(raw) : claude(raw)
             for (index, part) in parts.enumerated() {
                 let id = "\(line):\(index)"
                 guard !part.text.isEmpty, seen.insert(id).inserted else { continue }
                 messages.append(.init(id: id, line: line, role: part.role, title: part.title,
-                                      text: String(part.text.prefix(64_000))))
+                                      text: String(part.text.prefix(64_000)), imageBlocks: part.imageBlocks))
             }
         }
         return Self(kind: kind, messages: messages.sorted { $0.line < $1.line }, hasMore: frame["hasMore"] as? Bool ?? false,
                     totalLines: frame["totalLines"] as? Int ?? 0,
-                    startLine: frame["startLine"] as? Int ?? entries.compactMap { $0["line"] as? Int }.min())
+                    startLine: frame["startLine"] as? Int ?? entries.compactMap { $0["line"] as? Int }.min(), questionEvents: questionEvents)
     }
 
-    private struct Part { let role: AgentChatMessage.Role; var title: String? = nil; let text: String }
+    private struct Part { let role: AgentChatMessage.Role; var title: String? = nil; let text: String; var imageBlocks: [Int] = [] }
     private static func text(_ value: Any?) -> String {
         if let value = value as? String { return value }
         guard let blocks = value as? [[String: Any]] else { return "" }
@@ -136,7 +142,10 @@ public struct AgentChatTranscript: Equatable, Sendable {
         switch payload["type"] as? String {
         case "message":
             guard let role = AgentChatMessage.Role(rawValue: payload["role"] as? String ?? ""), role != .tool else { return [] }
-            return [Part(role: role, text: text(payload["content"]))]
+            let images = (payload["content"] as? [[String: Any]] ?? []).enumerated().compactMap { index, block in
+                ["input_image", "image"].contains(block["type"] as? String ?? "") ? index : nil
+            }
+            return [Part(role: role, text: text(payload["content"]), imageBlocks: images)]
         case "function_call", "custom_tool_call":
             return [Part(role: .tool, title: payload["name"] as? String ?? "Tool", text: readable(payload["arguments"] ?? payload["input"]))]
         case "function_call_output", "custom_tool_call_output":
@@ -150,10 +159,10 @@ public struct AgentChatTranscript: Equatable, Sendable {
               let role = AgentChatMessage.Role(rawValue: message["role"] as? String ?? ""), role != .tool else { return [] }
         if let content = message["content"] as? String { return [Part(role: role, text: content)] }
         guard let blocks = message["content"] as? [[String: Any]] else { return [] }
-        return blocks.compactMap { block in
+        return blocks.enumerated().compactMap { index, block in
             switch block["type"] as? String {
             case "text": return Part(role: role, text: block["text"] as? String ?? "")
-            case "image": return Part(role: role, text: "[Image attachment]")
+            case "image": return Part(role: role, text: "[Image attachment]", imageBlocks: [index])
             case "tool_use": return Part(role: .tool, title: block["name"] as? String ?? "Tool", text: readable(block["input"]))
             case "tool_result": return Part(role: .tool, title: "Tool result", text: text(block["content"]))
             default: return nil

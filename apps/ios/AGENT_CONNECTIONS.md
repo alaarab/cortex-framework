@@ -13,12 +13,12 @@ not borrow the Moshi app's credentials or tunnel. No Phren gateway is required.
 The SSH channel only opens the remote loopback address `127.0.0.1:24543` and
 exposes workspace and pane discovery, live transcripts, earlier history,
 attachments, exact-session prompt delivery, and interrupting the current turn.
-There is no shell or arbitrary route API.
+Native terminal input is carried by the helper's Herdr PTY route; Phren exposes no arbitrary HTTP proxy or SSH exec channel.
 
 The endpoint was observed on installed `moshi-hook 0.3.19`, which returns
 `kind`, `capabilities`, and workspace `groups` with tab `children`. Tab metadata
 includes `agentStatus`, `agent`, `cwd`, and optionally `agentPaneCount`. The
-adapter supports the default Herdr server, not tmux or named server discovery.
+adapter supports default and named Herdr servers, selected from `/v1/muxes`. Workspace requests carry `mux=herdr:<name>`; terminal requests use `mux=herdr&muxSession=<name>`. tmux discovery is not implemented.
 Status cards summarize tabs. Native chat separately discovers the actual panes
 and asks which agent to open when several supported conversations are present.
 An agent conversation's `sessionId` is **not** a Herdr server/session name and
@@ -38,8 +38,7 @@ The exported SSH authorization line restricts forwarding to the gateway and
 disables shell commands. The hook itself offers more capabilities than status;
 this authorization is not a server-side read-only credential scope. The chat
 client uses `/v1/prompt` for deliberate replies and `/v1/keys` only for Escape
-to interrupt a working turn. It exposes no arbitrary terminal keys, approval
-responses, agent launch, or process termination API.
+to interrupt a working turn. The native terminal carries deliberate keyboard input. Approval/question endpoints revalidate the pane tuple and use the exact helper-verified action/prompt identity. Workspace/tab closure requires an explicit confirmation because it stops processes.
 
 See [phone setup and tests](README.md#live-herdr-sessions-over-tailscale--ssh),
 [Moshi gateway roles](https://getmoshi.app/docs/install-desktop),
@@ -91,11 +90,9 @@ message sharing. Remote HTML is not rendered.
 
 Replies require a deliberate send. There is no retry on reconnect. If delivery
 is uncertain, the draft remains and the user is told to check the conversation
-before trying again. Drafts survive reopening within the app process and are
-keyed by the full conversation identity. Image/file drafts also survive
-reopening in the same process. Successfully uploaded paths are reused after a
+before trying again. Drafts survive process relaunch and are keyed by the full conversation identity, including the Herdr server. Text and attachment bytes are stored atomically in protected, backup-excluded Application Support files (four attachments per draft, 256 MB total attachment storage). Corrupt/future manifests are preserved and cannot be overwritten. Successfully uploaded paths are reused after a
 failed send; reconnect never uploads or delivers a draft automatically.
-Transcripts and drafts are not written to Git or persisted to disk. The context picker inserts selected project summary,
+Transcripts stay in bounded memory. Drafts are never written to Git or synchronized. Uploaded paths are not persisted across launches; attachments upload again when the user sends. The context picker inserts selected project summary,
 finding, or skill text into the draft for review. Context uses the selected
 pane's directory and full store identity. Project memory, skills, and graph are
 also reachable from chat options.
@@ -107,16 +104,17 @@ when Send is tapped; returned local paths are appended to the agent prompt.
 This uses the selected computer's SSH tunnel and helper, not a public upload
 service or the Moshi phone app. Uploaded files follow the helper's temporary-file
 lifetime; Phren does not promise permanent storage or delete host files remotely.
-Recent sent image previews are kept in bounded memory. Older transcript image
-blobs are not yet fetched, and drafts/previews do not survive app termination.
+Recent sent image previews are kept in bounded memory. Historical images use `/v1/transcripts/blob` with source/session/absolute line/original block index. Downloads are limited to 8 MB, cached within 16 MB, and downsampled for display.
 
 The microphone opens an editable dictation sheet using Phren's existing Apple
 Speech integration. Recording starts only on explicit action, stops when leaving
 or backgrounding, and inserts text into the draft without sending it.
 
-In-app approvals, starting agents, process termination, and other providers
-are not implemented. Stop interrupts the current working turn with Escape.
-Recognized blocked/waiting states disable reply and direct the user to the terminal. **Open terminal in Moshi** remains available.
+Approvals stream from `/events` and render inline. Question cards recognize Codex `request_user_input` and Claude `AskUserQuestion` transcript calls, clearing on their tool results. Answers are single-attempt POSTs; changed or already-answered prompts reject without replay. Unsupported/free-text/plan prompts remain available in the native Herdr terminal. Stop interrupts the current working turn with Escape. **Open terminal in Moshi** remains optional.
+
+**Herdr** on a computer opens its workspace browser, named server picker and native terminal. Workspaces/tabs can be created, renamed and closed; panes can be listed, created and focused. New workspaces require an explicit folder path. Closing workspaces/tabs prompts before stopping processes. Terminal output uses bounded binary WebSocket frames with resize and acknowledgement flow control; leaving/backgrounding detaches the client and never kills its panes. SwiftTerm 1.20.0 is MIT licensed; notices are included in Settings. Its reviewed build plugin only generates version metadata, so command-line builds use `-skipPackagePluginValidation`.
+
+**Repository changes** validates the selected pane and starts `/v1/diff/start` with that pane's cwd. Phren accepts only the returned local `/apps/diff/diff_<hex>/` path and renders `api/status`. Separate diff IDs prevent other repository views from changing the selected diff. Binary or omitted/oversized patches offer the native terminal; this viewer does not stage, discard, or commit files.
 
 Core tests cover transcript normalization, attachment bounds, history merging,
 and identity guards. Transport tests cover fragmented frames, limits, and
@@ -187,11 +185,10 @@ and that destination stays correct after row refreshes and returning to the app.
 ## Next integration steps
 
 - Verify setup and the app handoff on a physical iPhone over its tailnet.
-- Add named Herdr servers and tmux only after observing their discovery contract.
+- Add tmux after observing its discovery and terminal contracts.
 - Retain provider session/workspace/tab/pane metadata if the desktop registry
   becomes a source. Never execute its `focus` argv from a phone payload.
-- Add structured approvals, questions, transcript image retrieval, and
-  repository diff/browser previews after verifying their exact-session contracts.
+- Add browser previews, additional agent providers and dedicated agent launch controls after verifying their contracts.
 - Track the ongoing [chat feature comparison](CHAT_FEATURES.md).
 
 The CLI's existing `AgentRecord`/`JoinedAgent` and Herdr provider remain in

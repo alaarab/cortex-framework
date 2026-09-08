@@ -72,19 +72,27 @@ public struct LiveHost: Codable, Equatable, Sendable, Identifiable {
     public let port: Int
     public let username: String
     public var fingerprint: String?
+    public var herdrSession: String?
+    public var muxID: String { "herdr:" + (herdrSession ?? "default") }
 
     public init(id: UUID = UUID(), name: String, address: String, port: Int = 22,
-                username: String, fingerprint: String? = nil) throws {
+                username: String, fingerprint: String? = nil, herdrSession: String? = nil) throws {
         self.id = id
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         self.address = address.trimmingCharacters(in: .whitespacesAndNewlines)
         self.port = port
         self.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
         self.fingerprint = fingerprint
+        self.herdrSession = herdrSession
         try validate()
     }
 
     public func validate() throws {
+        if let herdrSession {
+            guard AgentChatTarget.validID(herdrSession), !herdrSession.contains(":") else {
+                throw PhrenKitError.validation("Choose a valid Herdr server name.")
+            }
+        }
         guard !name.isEmpty, name.count <= 100, !address.isEmpty, address.count <= 253,
               !username.isEmpty, username.count <= 100, (1...65535).contains(port),
               !address.contains("/"), !address.contains("@"),

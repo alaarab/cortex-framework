@@ -268,19 +268,18 @@ The microphone opens editable dictation. Chat options or **+ → Project memory
 and skills** add project summaries, findings, or skills to a draft for review.
 Chat options also open project memory, skills, and the graph. Failed or uncertain
 delivery preserves the draft and never retries automatically. Text and attachment
-drafts survive reopening during the current app process; they do not survive
-app termination or sync to Git.
+drafts survive process relaunch in protected local storage. They do not sync to Git.
+
+**Herdr workspaces & terminal** on a computer opens native workspace, tab and pane navigation. Choose a named server, create a workspace in a folder, add tabs/panes, rename or close workspaces/tabs, and use the terminal without leaving Phren. Closing a workspace or tab asks before stopping its processes.
 
 The adapter requires the computer's existing `moshi-hook` (verified with 0.3.19)
-and default Herdr server, but does not require the Moshi iPhone app. Chat receives
+and a default or named Herdr server, but does not require the Moshi iPhone app. Chat receives
 live transcript updates while visible, loads earlier messages on demand, and
 reconnects after foregrounding. Tools expand inline; Markdown headings and code
 cards are native, code can be copied, and messages can be copied or shared.
-**Stop** interrupts a working turn. In-app approvals and starting agents remain
-outside this version; a blocked agent requires an answer in the terminal.
+**Stop** interrupts a working turn. Approvals and multiple-choice questions appear inline; other prompts can be answered in the native **Herdr terminal**. **Repository changes** opens the selected pane's Git diff.
 
-History and image previews are bounded in memory. Earlier transcript images are
-not yet downloaded, and live transcript records are not token-by-token output.
+History and image previews are bounded in memory. Historical images load from the selected conversation. Live transcript records are not token-by-token output.
 See [connection contracts and validation](AGENT_CONNECTIONS.md#native-conversation)
 and the [feature comparison and next work](CHAT_FEATURES.md).
 
@@ -371,10 +370,9 @@ backgrounding cancels the read and closes the socket. Last received status is
 held in memory and explicitly marked stale after a failure or pause.
 
 This adapter was verified with `moshi-hook 0.3.19` and currently supports its
-**default Herdr server**. Entries are tabs, possibly aggregating multiple agent
+**default and named Herdr servers**. Entries are tabs, possibly aggregating multiple agent
 panes. Unknown states stay unknown. Other gateway kinds show an unsupported
-message. Named servers, tmux discovery, approvals, and starting or stopping
-agents are not implemented. Native chat discovers individual panes separately.
+message. tmux discovery and dedicated agent-launch controls are not implemented. Native chat discovers individual panes separately.
 
 **Link to project** associates an observed directory with an explicit full
 store ID and project on this phone. Subdirectories match at path boundaries,

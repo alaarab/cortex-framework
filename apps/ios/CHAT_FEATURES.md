@@ -17,6 +17,12 @@ configured computer's pinned SSH connection. Moshi on the iPhone is optional.
 | Stop | Escape to the validated, working conversation; does not terminate the process | [Chat controls](https://getmoshi.app/docs/chat-view) |
 | Readable messages | Native inline Markdown, headings, fenced code cards with Copy, collapsed tools, copy/share messages | [Chat View](https://getmoshi.app/docs/chat-view) |
 | Keyboard send | Command-Return; ordinary Return remains available for multiline text | [Chat controls](https://getmoshi.app/docs/chat-view) |
+| Herdr terminal | Native SwiftTerm terminal over the existing SSH connection; keyboard, Ctrl/Esc/Tab/arrows, resize, reconnect and safe detachment | [Herdr](https://getmoshi.app/docs/herdr) |
+| Herdr management | Discover and select named servers; browse workspaces/tabs/panes; create workspaces, tabs and panes; rename/close workspaces and tabs | [Multiplexer chooser](https://getmoshi.app/docs/debug-multiplexer-chooser) |
+| Approvals and questions | Inline approve/deny and single/multiple-choice questions, exact action IDs, helper-side stale-prompt rejection; native terminal fallback | [Chat controls](https://getmoshi.app/docs/chat-view) |
+| Historical images | Fetch original image bytes by conversation, JSONL line and original content block; bounded cache and downsampled preview | [Chat debugging](https://getmoshi.app/docs/debug-chat-view) |
+| Repository diffs | Fresh pane directory, independent diff session, changed-file list and colored patch text; read-only | [Diff Viewer](https://getmoshi.app/docs/diff-viewer) |
+| Persistent drafts | Device-local text and attachments keyed by computer/server/workspace/tab/pane/provider/conversation; atomic writes, integrity checks and protected files | Phren feature |
 | Project context | Insert selected Phren summaries, findings, or skills into a draft; open project memory/skills/graph | Phren feature |
 
 Image uploads use the helper's observed `/v1/upload` API. It returns a path in a
@@ -30,16 +36,14 @@ attachments are limited to four files, 8 MB each. Local sent previews are bounde
 
 | Gap | Work required before shipping |
 | --- | --- |
-| Structured approvals and questions | Observe request IDs, answer payloads, stale-request handling, and exact-session validation. The helper advertises `approvals.answer`; Phren still sends the user to the terminal. |
-| Older transcript images | Implement and verify the session/line/block-scoped blob API. New local sent-image previews work; historical image blocks remain placeholders. |
-| Repository diffs | Verify a read-only route scoped to the selected pane's repository; add native navigation for changed files and hunks. See [Diff Viewer](https://getmoshi.app/docs/diff-viewer). |
 | Browser previews | Verify URL, tunnel ownership, lifecycle, and explicit user navigation. See [Browser Preview](https://getmoshi.app/docs/browser-preview). |
-| Durable drafts | Store text/attachments locally with bounded storage, cleanup, and full conversation identity; current drafts survive only within the app process. |
-| Additional providers and multiplexers | Add providers and tmux/named Herdr servers after verifying their transcript, discovery, and send contracts. |
+| Additional providers and multiplexers | Add providers and tmux after verifying their transcript, discovery, and send contracts. |
 | Usage, background notifications, agent creation | Separate integrations; no inferred account metrics or background agent supervision. See [Agents and Usages](https://getmoshi.app/docs/agents-usages). |
 
 ## Validation
 
+- Herdr integration: pinned SSH to an isolated named server, create/rename/focus/close, real PTY resize/input/output, and detach preserving its shell. Original image bytes and independent diff sessions verified against the installed helper. Stale approval requests reject with HTTP 409.
+- Simulator: inline approval/question responses, historical-image preview, diff/terminal navigation, and draft/image recovery after process relaunch.
 - Core coverage: attachment bounds/filenames, transcript normalization, pane and
   conversation guards, history merge/reconnect/truncation, and retained caps.
 - Real helper integration: fresh pinned SSH relay to an inert process in its own

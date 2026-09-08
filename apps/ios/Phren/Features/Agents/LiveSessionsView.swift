@@ -164,6 +164,11 @@ private struct LiveHostView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 connectionCard
+                if let host {
+                    NavigationLink { HerdrWorkspacesView(hostID: host.id) } label: {
+                        Label("Herdr workspaces & terminal", systemImage: "terminal").frame(maxWidth: .infinity, alignment: .leading).padding(16).phrenCard()
+                    }.buttonStyle(.plain)
+                }
                 if monitor.snapshot != nil && host != nil {
                     Picker("Session view", selection: $mode) {
                         ForEach(SessionViewMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -210,13 +215,11 @@ private struct LiveHostView: View {
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .toolbar { Button("Connection settings", systemImage: "gearshape") { editing = true }.disabled(host == nil) }
-        .onChange(of: host) { _, value in
-            if value == nil {
-                monitor.snapshot = nil
-                monitor.lastUpdated = nil
-                monitor.message = nil
-                monitor.fingerprint = nil
-            }
+        .onChange(of: host) { _, _ in
+            monitor.snapshot = nil
+            monitor.lastUpdated = nil
+            monitor.message = nil
+            monitor.fingerprint = nil
         }
         .sheet(isPresented: $editing) {
             if let host { NavigationStack { LiveHostEditor(existing: host) } }
@@ -460,6 +463,9 @@ private struct LiveSessionDetailView: View {
                         }
                         .listRowBackground(session.tab.activity.color.opacity(0.10))
                         Section {
+                            NavigationLink { HerdrTerminalView(host: session.host, session: session) } label: {
+                                Label("Herdr terminal", systemImage: "terminal")
+                            }.disabled(!fresh)
                             AgentConversationLink(session: session, honorsPreference: false) {
                                 Label("Chat with agent", systemImage: "bubble.left.and.bubble.right")
                                     .frame(minHeight: 44)

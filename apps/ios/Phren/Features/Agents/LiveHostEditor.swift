@@ -11,6 +11,7 @@ struct LiveHostEditor: View {
     @State private var address = ""
     @State private var port = "22"
     @State private var username = ""
+    @State private var herdrSession = ""
     @State private var key = ""
     @State private var error: String?
     @State private var saved = false
@@ -49,6 +50,10 @@ struct LiveHostEditor: View {
                 Text("The private key stays on this iPhone. Phren connects to existing Herdr sessions for status and agent chat.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Herdr server") {
+                TextField("default", text: $herdrSession).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Text("Leave empty for the default server, or enter a named Herdr server on this computer.").font(.caption).foregroundStyle(.secondary)
+            }
             if let error { Section { Text(error).foregroundStyle(.orange) } }
             if existing != nil {
                 Section {
@@ -71,6 +76,7 @@ struct LiveHostEditor: View {
             if let existing {
                 id = existing.id; name = existing.name; address = existing.address
                 port = String(existing.port); username = existing.username
+                herdrSession = existing.herdrSession ?? ""
                 createKey()
             }
         }
@@ -96,7 +102,8 @@ struct LiveHostEditor: View {
     private func save() {
         do {
             let host = try LiveHost(id: id, name: name, address: address, port: Int(port) ?? 0,
-                                   username: username, fingerprint: existing?.fingerprint)
+                                   username: username, fingerprint: existing?.fingerprint,
+                                   herdrSession: herdrSession.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : herdrSession.trimmingCharacters(in: .whitespacesAndNewlines))
             data = try LiveSessionPreferences.saving(host, in: data)
             saved = true
             dismiss()

@@ -16,7 +16,7 @@ final class MoshiConnectionTests: XCTestCase {
         let result = try await MoshiConnection.fetch(host: server.host(), privateKey: server.deviceKey.rawRepresentation)
         XCTAssertEqual(result.groups.first?.children.first?.status, "Working")
         let request = try await server.request.futureResult.get()
-        XCTAssertTrue(request.hasPrefix("GET /v1/workspaces HTTP/1.1\r\n"))
+        XCTAssertTrue(request.hasPrefix("GET /v1/workspaces?mux=herdr:default HTTP/1.1\r\n"))
         XCTAssertTrue(request.contains("Host: 127.0.0.1:24543\r\n"))
         try await server.disconnected.futureResult.get()
     }

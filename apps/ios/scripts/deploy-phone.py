@@ -104,7 +104,7 @@ def main():
     with signing(config) as settings:
         print(f"Building and signing Phren build {number}. Build log: {log_path}", flush=True)
         build([
-            "xcodebuild", "build", "-project", "Phren.xcodeproj", "-scheme", "Phren",
+            "xcodebuild", "build", "-skipPackagePluginValidation", "-project", "Phren.xcodeproj", "-scheme", "Phren",
             "-configuration", "Release", "-destination", "generic/platform=iOS",
             "-derivedDataPath", str(derived), "-allowProvisioningUpdates",
             "CODE_SIGN_STYLE=Automatic", f"DEVELOPMENT_TEAM={team}", f"CURRENT_PROJECT_VERSION={number}", *settings,
