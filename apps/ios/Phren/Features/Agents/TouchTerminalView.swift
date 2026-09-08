@@ -5,9 +5,10 @@ import UIKit
 /// Keep taps for TUI controls, scroll with a swipe, and select only after a hold.
 final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEditMenuInteractionDelegate {
     private var wheelPan: UIPanGestureRecognizer?
-    private var tuiTap: UITapGestureRecognizer?
-    private var shellTaps: [UITapGestureRecognizer] = []
     private var wheelRemainder: CGFloat = 0
+    private var pinchStartSize: CGFloat = 12
+    private var requestingKeyboard = false
+    var onTextSizeChanged: ((CGFloat) -> Void)?
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     #if DEBUG && targetEnvironment(simulator)
     private(set) var copyActions = 0
@@ -16,12 +17,18 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
     func configureTouchInput() {
         // SwiftUI owns the one keyboard toolbar. SwiftTerm installs another by default.
         inputAccessoryView = nil
-        shellTaps = (gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }
-        for gesture in gestureRecognizers ?? [] where gesture is UILongPressGestureRecognizer {
+        // Own taps in both shell and TUI modes: SwiftTerm's taps require focus
+        // and otherwise raise the keyboard instead of activating the target.
+        for gesture in gestureRecognizers ?? [] where gesture is UILongPressGestureRecognizer || gesture is UITapGestureRecognizer {
             removeGestureRecognizer(gesture)
         }
+        panGestureRecognizer.maximumNumberOfTouches = 1
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(zoomTerminal(_:)))
+        addGestureRecognizer(pinch)
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(selectText(_:)))
         hold.minimumPressDuration = 0.45
+        hold.numberOfTouchesRequired = 1
+        hold.delegate = self
         addGestureRecognizer(hold)
         let wheel = UIPanGestureRecognizer(target: self, action: #selector(scrollTerminal(_:)))
         wheel.maximumNumberOfTouches = 1
@@ -32,11 +39,48 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapTerminal(_:)))
         tap.require(toFail: hold)
         tap.require(toFail: wheel)
+        tap.require(toFail: pinch)
         addGestureRecognizer(tap)
-        tuiTap = tap
         addInteraction(editMenu)
         updateScrollGestures()
-        accessibilityHint = "Swipe to scroll. Touch and hold to select text, then choose Copy or Paste."
+        accessibilityHint = "Tap controls and links. Swipe to scroll. Pinch to resize text. Hold to select. Use the keyboard button to type."
+    }
+
+    func toggleKeyboard() {
+        if isFirstResponder { _ = resignFirstResponder(); return }
+        requestingKeyboard = true
+        defer { requestingKeyboard = false }
+        _ = becomeFirstResponder()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        // UIKit text interactions must not resize the viewport on an ordinary
+        // tap, link, or selection. Only the explicit toolbar button opts in.
+        guard requestingKeyboard || isFirstResponder else { return false }
+        return super.becomeFirstResponder()
+    }
+
+    func setTextSize(_ size: CGFloat) {
+        guard size.isFinite else { return }
+        let bounded = min(24, max(6, (size * 2).rounded() / 2))
+        if font.pointSize != bounded { font = font.withSize(bounded) }
+    }
+
+    @objc private func zoomTerminal(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            editMenu.dismissMenu()
+            clearSelection()
+            pinchStartSize = font.pointSize
+        case .changed, .ended:
+            // Resize the character grid, not a magnified/cropped bitmap. The
+            // existing size delegate resizes the remote PTY so Herdr reflows.
+            setTextSize(pinchStartSize * gesture.scale)
+            if gesture.state == .ended { onTextSizeChanged?(font.pointSize) }
+        case .cancelled:
+            setTextSize(pinchStartSize)
+        default: break
+        }
     }
 
     override func mouseModeChanged(source: Terminal) {
@@ -56,9 +100,6 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
         allowMouseReporting = !hasActiveSelection
         panGestureRecognizer.isEnabled = getTerminal().mouseMode == .off && !hasActiveSelection
         wheelPan?.isEnabled = getTerminal().mouseMode != .off || hasActiveSelection
-        let localShell = getTerminal().mouseMode == .off && !hasActiveSelection
-        shellTaps.forEach { $0.isEnabled = localShell }
-        tuiTap?.isEnabled = !localShell
     }
 
     override func paste(_ sender: Any?) {
@@ -86,6 +127,7 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer is UILongPressGestureRecognizer { return gestureRecognizer.numberOfTouches == 1 }
         guard gestureRecognizer === wheelPan, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
         if hasActiveSelection { return true }
         let velocity = pan.velocity(in: self)
@@ -108,12 +150,12 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
             return
         }
         let core = getTerminal()
-        guard core.mouseMode != .off else { return }
         let point = gesture.location(in: self)
         if let link = core.link(at: .buffer(bufferPosition(at: point)), mode: .explicitAndImplicit) {
             terminalDelegate?.requestOpenLink(source: self, link: link, params: [:])
             return
         }
+        guard core.mouseMode != .off else { return }
         let viewport = CGPoint(x: point.x - bounds.minX, y: point.y - bounds.minY)
         let column = max(0, min(core.cols - 1, Int(viewport.x / cellSize.width)))
         let row = max(0, min(core.rows - 1, Int(viewport.y / cellSize.height)))
@@ -123,7 +165,6 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
             core.sendEvent(buttonFlags: flags, x: column, y: row,
                            pixelX: max(0, Int(viewport.x)), pixelY: max(0, Int(viewport.y)))
         }
-        becomeFirstResponder()
     }
 
     @objc private func scrollTerminal(_ gesture: UIPanGestureRecognizer) {

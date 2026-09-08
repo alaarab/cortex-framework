@@ -22,12 +22,18 @@ own colors and identity.
   change either clipboard or send text to the computer. Paste adds no Enter and
   respects the terminal's bracketed-paste mode.
 - Keep tappable terminal controls working, including Herdr's workspace switcher.
+  Taps activate controls and explicit or plain web links immediately, with the
+  keyboard hidden or visible. Only the keyboard button opens the keyboard;
+  reading, selecting, pasting, and tapping must not steal the terminal's space.
+  Pinch changes text size and the remote grid, fitting more columns for Herdr's
+  sidebar when zoomed out. Tap coordinates must remain correct at every size.
   The graph similarly owns its pan gesture and uses its visible back button.
 - Carry the screen background through project controls, including the Skills
   entry and section picker. Avoid unintentional black gutters between them.
 
 Review the actual keyboard-open screen, not just the empty terminal. Test both
-scroll directions, hold-and-drag, copy/paste, keyboard dismissal, and returning
+scroll directions, hold-and-drag, copy/paste, first-tap controls and links with
+the keyboard hidden, pinch in/out, keyboard dismissal, and returning
 from another app. Inspect standard and accessibility text sizes. A compact layout
 must preserve session identity, freshness checks, and the optional Moshi default.
 

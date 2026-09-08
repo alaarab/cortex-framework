@@ -285,6 +285,10 @@ drafts survive process relaunch in protected local storage. They do not sync to 
 Open Herdr from the computer's terminal toolbar button. Session rows open chat;
 their info button opens the terminal, Moshi, project graph, and session metadata.
 The terminal has one compact key bar with a directional pad and explicit Paste.
+Only its keyboard button raises the keyboard. Controls and web links activate on
+the first tap with the keyboard hidden or visible. Pinch to resize the text and
+remote grid; zooming out fits more columns for Herdr's sidebar. The chosen text
+size is remembered across terminals and app launches.
 Swipe to scroll; hold to select text and drag to extend it, then choose Copy or
 Paste. A swipe never sends a desktop selection drag to Herdr.
 

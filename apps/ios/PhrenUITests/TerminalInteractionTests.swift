@@ -2,6 +2,77 @@ import XCTest
 
 final class TerminalInteractionTests: XCTestCase {
     @MainActor
+    func testSwitchActivatesOnFirstTapWithoutRaisingKeyboard() throws {
+        let app = launch("--terminal-controls-fixture")
+        let before = try state(app)
+        try tapCell(app, column: before.columns - 3, row: 1)
+        XCTAssertTrue(try state(app).switchOpen, "Switch must actually open, not just emit some mouse bytes")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertEqual(try state(app).rows, before.rows, "A control tap must not resize Herdr")
+        try tapCell(app, column: before.columns - 3, row: 1)
+        XCTAssertFalse(try state(app).switchOpen)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+
+        app.buttons["Toggle terminal keyboard"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        try tapCell(app, column: try state(app).columns - 3, row: 1)
+        XCTAssertTrue(try state(app).switchOpen)
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        app.buttons["Toggle terminal keyboard"].tap()
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        try tapCell(app, column: try state(app).columns - 3, row: 1)
+        XCTAssertFalse(try state(app).switchOpen)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        capture(app, "Switch works with keyboard hidden")
+    }
+
+    @MainActor
+    func testShellLinksOpenOnFirstTapAndBlankTapsKeepKeyboardHidden() throws {
+        let app = launch("--terminal-links-fixture")
+        try tapCell(app, column: 4, row: 1)
+        XCTAssertEqual(try state(app).links, ["https://example.com/explicit"])
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        try tapCell(app, column: 10, row: 2)
+        XCTAssertEqual(try state(app).links, ["https://example.com/explicit", "https://example.com/plain"])
+        try tapCell(app, column: 10, row: 8)
+        XCTAssertEqual(try state(app).input, "")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        app.buttons["Toggle terminal keyboard"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testPinchReflowsHerdrAndKeepsLinksAndSwitchAccurate() throws {
+        let app = launch("--terminal-controls-fixture")
+        let terminal = app.descendants(matching: .any).matching(identifier: "herdr-terminal").firstMatch
+        let before = try state(app)
+        terminal.pinch(withScale: 0.5, velocity: -1)
+        let zoomedOut = try state(app)
+        XCTAssertLessThan(zoomedOut.fontSize, before.fontSize)
+        XCTAssertGreaterThan(zoomedOut.columns, before.columns)
+        XCTAssertGreaterThanOrEqual(zoomedOut.columns, 100, "Zoom out must fit a sidebar-sized grid")
+        XCTAssertEqual(zoomedOut.selected, "")
+        XCTAssertEqual(zoomedOut.input, "", "Pinching must not click or drag anything remotely")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        try tapCell(app, column: zoomedOut.columns - 3, row: 1)
+        XCTAssertTrue(try state(app).switchOpen)
+        let clicked = try state(app).input
+        try tapCell(app, column: 4, row: 5)
+        XCTAssertEqual(try state(app).links, ["https://example.com/herdr"])
+        XCTAssertEqual(try state(app).input, clicked, "A link tap must not also click through to Herdr")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        capture(app, "Pinch out to fit Herdr sidebar")
+
+        terminal.pinch(withScale: 2, velocity: 1)
+        let zoomedIn = try state(app)
+        XCTAssertGreaterThan(zoomedIn.fontSize, zoomedOut.fontSize)
+        XCTAssertLessThan(zoomedIn.columns, zoomedOut.columns)
+        try tapCell(app, column: zoomedIn.columns - 3, row: 1)
+        XCTAssertFalse(try state(app).switchOpen, "Switch coordinates must follow zoom in too")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+    }
+
+    @MainActor
     func testOneCompactToolbarWithKeyboardAndArrowPad() throws {
         let app = launch("--terminal-mouse-fixture")
         app.buttons["Toggle terminal keyboard"].tap()
@@ -136,6 +207,22 @@ final class TerminalInteractionTests: XCTestCase {
         let selected: String
         let topRow: Int
         let copyActions: Int
+        let links: [String]
+        let switchOpen: Bool
+        let fontSize: Double
+        let columns: Int
+        let rows: Int
+        let cellWidth: Double
+        let cellHeight: Double
+    }
+
+    @MainActor
+    private func tapCell(_ app: XCUIApplication, column: Int, row: Int) throws {
+        let geometry = try state(app)
+        let terminal = app.descendants(matching: .any).matching(identifier: "herdr-terminal").firstMatch
+        terminal.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: (Double(column) - 0.5) * geometry.cellWidth,
+                                 dy: (Double(row) - 0.5) * geometry.cellHeight)).tap()
     }
 
     @MainActor

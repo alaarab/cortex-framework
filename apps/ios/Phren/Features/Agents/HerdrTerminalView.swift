@@ -13,6 +13,10 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     #if DEBUG && targetEnvironment(simulator)
     var fixtureReport = ""
     private var fixtureInput = ""
+    private var fixtureLinks: [String] = []
+    private var fixtureSwitchOpen = false
+    private var fixtureSwitchPressed = false
+    private var fixtureMouseInput = ""
     #endif
     private var socket: HerdrTerminalSocket?
     private var writes: Task<Void, Never>?
@@ -21,6 +25,12 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         super.init()
         terminal.terminalDelegate = self
         terminal.configureTouchInput()
+        let defaults = AppModel.isUITesting ? UserDefaults(suiteName: "phren.ui-tests")! : .standard
+        // Gesture fixtures always begin at a known size; production restores
+        // the user's choice across terminals and app launches.
+        let savedSize = AppModel.isUITesting ? 12 : defaults.double(forKey: "terminal.textSize.v1")
+        terminal.setTextSize(savedSize > 0 ? savedSize : 12)
+        terminal.onTextSizeChanged = { defaults.set(Double($0), forKey: "terminal.textSize.v1") }
         terminal.nativeBackgroundColor = UIColor(PhrenTheme.bgSunken)
         terminal.nativeForegroundColor = UIColor(PhrenTheme.text)
         terminal.caretColor = UIColor(PhrenTheme.cyan)
@@ -41,8 +51,17 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
             if AgentChatFixture.enabled {
                 try await Task.sleep(for: .milliseconds(200))
                 fixtureInput = ""
+                fixtureLinks = []
+                fixtureSwitchOpen = false
+                fixtureSwitchPressed = false
+                fixtureMouseInput = ""
                 let args = ProcessInfo.processInfo.arguments
-                if args.contains("--terminal-mouse-fixture") {
+                if args.contains("--terminal-controls-fixture") {
+                    terminal.feed(text: "\u{1B}[?1049h\u{1B}[?1002h\u{1B}[?1006h")
+                    renderControlsFixture()
+                } else if args.contains("--terminal-links-fixture") {
+                    terminal.feed(text: "\u{1B}[2J\u{1B}[H\u{1B}]8;;https://example.com/explicit\u{1B}\\Open website\u{1B}]8;;\u{1B}\\\r\nhttps://example.com/plain\r\n$ ")
+                } else if args.contains("--terminal-mouse-fixture") {
                     terminal.feed(text: "\u{1B}[?1049h\u{1B}[?1002h\u{1B}[?1006h")
                     terminal.feed(text: (1...18).map { "Selectable terminal text · line \($0)" }.joined(separator: "\r\n"))
                 } else if args.contains("--terminal-scrollback-fixture") {
@@ -56,7 +75,12 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
                     let report: [String: Any] = ["input": fixtureInput,
                         "selected": terminal.selection.getSelectedText(),
                         "topRow": terminal.getTerminal().getTopVisibleRow(),
-                        "copyActions": terminal.copyActions]
+                        "copyActions": terminal.copyActions,
+                        "links": fixtureLinks, "switchOpen": fixtureSwitchOpen,
+                        "fontSize": terminal.font.pointSize, "columns": terminal.getTerminal().cols,
+                        "rows": terminal.getTerminal().rows,
+                        "cellWidth": terminal.getOptimalFrameSize().width / CGFloat(terminal.getTerminal().cols),
+                        "cellHeight": terminal.getOptimalFrameSize().height / CGFloat(terminal.getTerminal().rows)]
                     let updated = String(decoding: try JSONSerialization.data(withJSONObject: report, options: .sortedKeys), as: UTF8.self)
                     if fixtureReport != updated { fixtureReport = updated }
                     try await Task.sleep(for: .milliseconds(100))
@@ -98,7 +122,13 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     }
     func input(_ text: String) {
         #if DEBUG && targetEnvironment(simulator)
-        if AgentChatFixture.enabled { if connected { fixtureInput += text }; return }
+        if AgentChatFixture.enabled {
+            if connected {
+                fixtureInput += text
+                if ProcessInfo.processInfo.arguments.contains("--terminal-controls-fixture") { handleControlsFixture(text) }
+            }
+            return
+        }
         #endif
         guard connected, let socket else { return }
         let previous = writes, run = generation
@@ -111,7 +141,10 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     }
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         #if DEBUG && targetEnvironment(simulator)
-        if AgentChatFixture.enabled { return }
+        if AgentChatFixture.enabled {
+            if ProcessInfo.processInfo.arguments.contains("--terminal-controls-fixture") { renderControlsFixture() }
+            return
+        }
         #endif
         guard connected, let socket else { return }
         Task { try? await socket.resize(columns: newCols, rows: newRows) }
@@ -124,8 +157,41 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func scrolled(source: TerminalView, position: Double) {}
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        #if DEBUG && targetEnvironment(simulator)
+        if AgentChatFixture.enabled { fixtureLinks.append(link); return }
+        #endif
         if let url = URL(string: link), ["http", "https"].contains(url.scheme?.lowercased() ?? "") { UIApplication.shared.open(url) }
     }
+
+    #if DEBUG && targetEnvironment(simulator)
+    private func renderControlsFixture() {
+        let column = max(1, terminal.getTerminal().cols - 7)
+        let sidebar = terminal.getTerminal().cols >= 100 ? "Sidebar visible" : "Narrow layout"
+        terminal.feed(text: "\u{1B}[2J\u{1B}[HPhren\u{1B}[1;\(column)H switch\u{1B}[3;1H\(fixtureSwitchOpen ? "Workspaces: phren, demo" : "Workspace: phren")\u{1B}[5;1H\u{1B}]8;;https://example.com/herdr\u{1B}\\Open website\u{1B}]8;;\u{1B}\\\u{1B}[7;1H\(sidebar)\u{1B}[2 q")
+    }
+
+    private func handleControlsFixture(_ text: String) {
+        // Require a complete left press/release at the rendered Switch cells.
+        // Merely emitting some mouse bytes is not a successful control tap.
+        fixtureMouseInput += text
+        let expression = try! NSRegularExpression(pattern: "\u{1B}\\[<([0-9]+);([0-9]+);([0-9]+)([Mm])")
+        let matches = expression.matches(in: fixtureMouseInput, range: NSRange(fixtureMouseInput.startIndex..., in: fixtureMouseInput))
+        for match in matches {
+            let value = fixtureMouseInput as NSString
+            let button = value.substring(with: match.range(at: 1))
+            let column = Int(value.substring(with: match.range(at: 2))) ?? 0
+            let row = Int(value.substring(with: match.range(at: 3))) ?? 0
+            let isPress = value.substring(with: match.range(at: 4)) == "M"
+            let onSwitch = button == "0" && row == 1 && column >= terminal.getTerminal().cols - 6
+            if isPress { fixtureSwitchPressed = onSwitch }
+            else {
+                if fixtureSwitchPressed && onSwitch { fixtureSwitchOpen.toggle(); renderControlsFixture() }
+                fixtureSwitchPressed = false
+            }
+        }
+        if let last = matches.last { fixtureMouseInput = (fixtureMouseInput as NSString).substring(from: NSMaxRange(last.range)) }
+    }
+    #endif
     func clipboardCopy(source: TerminalView, content: Data) {}
     func clipboardRead(source: TerminalView) -> Data? { nil }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
@@ -192,8 +258,7 @@ struct HerdrTerminalView: View {
                     Image(systemName: "document.on.clipboard").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }.accessibilityLabel("Paste into terminal")
                 Button {
-                    if model.terminal.isFirstResponder { model.terminal.resignFirstResponder() }
-                    else { model.terminal.becomeFirstResponder() }
+                    model.terminal.toggleKeyboard()
                 } label: {
                     Image(systemName: "keyboard").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }.accessibilityLabel("Toggle terminal keyboard")
