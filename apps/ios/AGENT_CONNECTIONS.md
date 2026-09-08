@@ -36,6 +36,21 @@ named directories or projects from being conflated. Missing
 stores or projects are shown as unavailable. Preferences reject corrupt or
 future schemas without replacing the original data.
 
+The Agents landing page also polls all saved computers, using one independent
+`LiveHostMonitor` per configured host. It publishes each result as it arrives;
+there is no all-host response barrier. Working and waiting sessions lead the
+combined list. Every row identifies its computer, and row/detail identity includes
+the host ID and Herdr server as well as workspace/tab IDs. Search spans machine,
+project, title, agent, and folder. Offline snapshots are separated under Last seen
+and cannot open chat, while other computers remain live. Leaving/backgrounding
+cancels the loops. Host removal or configuration changes replace the corresponding
+monitor, so its previous destination cannot leak into the new connection.
+App tests exercise independent updates, cancellation, failed hosts, closed tabs,
+and host changes. Chat presentation belongs to the overview, so moving a row to
+another status group does not dismiss an open conversation. UI tests open and reply to sessions with identical workspace/tab
+IDs on two computers, verify the host label and reply isolation, and cover search,
+offline rows, empty state, and returning from the background.
+
 The exported SSH authorization line restricts forwarding to IPv4/IPv6 localhost and
 disables shell commands. The hook itself offers more capabilities than status;
 this authorization is not a server-side read-only credential scope. The chat

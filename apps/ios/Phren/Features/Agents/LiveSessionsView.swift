@@ -3,42 +3,64 @@ import PhrenLive
 import SwiftUI
 
 struct LiveSessionsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
     @State private var adding = false
+    @State private var visible = false
+    @State private var query = ""
+    @State private var refreshID = UUID()
+    @State private var overview = SessionOverviewMonitor()
+    @State private var selected: OverviewSelection?
+    @State private var chatSession: DiscoveredMoshiSession?
+    private var preferences: LiveSessionPreferences? { try? LiveSessionPreferences.read(data) }
+    private var hosts: [LiveHost] { preferences?.hosts ?? [] }
+
+    private struct OverviewSelection: Identifiable {
+        let session: DiscoveredMoshiSession
+        let monitor: LiveHostMonitor
+        var id: DiscoveredMoshiSession.ID { session.id }
+    }
+    private struct PollID: Equatable { let hosts: [LiveHost]; let active: Bool; let refresh: UUID }
 
     var body: some View {
-        PhrenList {
-            Section {
-                Text("See what's running on your computers and talk to your agents here.")
-                    .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
-                    .accessibilityIdentifier("agents-introduction")
-                    .padding(.vertical, 2)
-                    .listRowBackground(Color.clear)
-            }
-            Section {
-                if let preferences = try? LiveSessionPreferences.read(data) {
-                    ForEach(preferences.hosts) { host in
-                        NavigationLink { LiveHostView(hostID: host.id) } label: {
-                            PhrenMenuRow(title: host.name, subtitle: host.address, icon: "desktopcomputer")
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            PhrenList {
+                Section {
+                    let connected = overview.connectedCount(at: context.date)
+                    Text(hosts.isEmpty ? "Connect a computer to see its sessions here."
+                         : "Sessions across your computers · \(connected)/\(hosts.count) connected")
+                        .font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                        .accessibilityIdentifier("agents-introduction")
+                        .padding(.vertical, 2)
+                        .listRowBackground(Color.clear)
+                }
+                sessionSections(at: context.date)
+                Section {
+                    if let preferences = try? LiveSessionPreferences.read(data) {
+                        ForEach(preferences.hosts) { host in
+                            NavigationLink { LiveHostView(hostID: host.id) } label: {
+                                PhrenMenuRow(title: host.name, subtitle: host.address, icon: "desktopcomputer")
+                            }
+                            .accessibilityIdentifier("live-host:\(host.id)")
                         }
-                        .accessibilityIdentifier("live-host:\(host.id)")
+                        Button("Add computer", systemImage: "plus") { adding = true }
+                    } else {
+                        Text("Saved connections couldn't be read. They have been preserved; update phren before editing them.")
+                            .foregroundStyle(.orange)
                     }
-                    Button("Add computer", systemImage: "plus") { adding = true }
-                } else {
-                    Text("Saved connections couldn't be read. They have been preserved; update phren before editing them.")
-                        .foregroundStyle(.orange)
+                } header: {
+                    Text("Computers")
+                } footer: {
+                    Text("Keep Tailscale connected on both devices when you're away. Moshi is optional.")
                 }
-            } header: {
-                Text("Computers")
-            } footer: {
-                Text("Keep Tailscale connected on both devices when you're away. Moshi is optional.")
-            }
-            Section("Agent setup") {
-                NavigationLink { SkillsView() } label: {
-                    PhrenMenuRow(title: "Skills", icon: "wand.and.stars", color: PhrenTheme.lavender)
-                }
-                NavigationLink { AgentsView() } label: {
-                    PhrenMenuRow(title: "Agent instructions", icon: "person.crop.rectangle.stack")
+                Section("Agent setup") {
+                    NavigationLink { SkillsView() } label: {
+                        PhrenMenuRow(title: "Skills", icon: "wand.and.stars", color: PhrenTheme.lavender)
+                    }
+                    NavigationLink { AgentsView() } label: {
+                        PhrenMenuRow(title: "Agent instructions", icon: "person.crop.rectangle.stack")
+                    }
                 }
             }
         }
@@ -46,12 +68,73 @@ struct LiveSessionsView: View {
         // Keep the title in the navigation bar rather than the collapsible
         // large-title region when this list is hosted directly by a tab.
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search all sessions")
+        .textInputAutocapitalization(.never).autocorrectionDisabled()
         .phrenScreen()
         .toolbar {
             NavigationLink { WebServersView() } label: { Label("Web servers", systemImage: "globe") }
                 .accessibilityIdentifier("all-web-servers")
+            Button("Refresh all sessions", systemImage: "arrow.clockwise") { refreshID = UUID() }
         }
+        .refreshable { refreshID = UUID() }
         .sheet(isPresented: $adding) { NavigationStack { LiveHostEditor() } }
+        .sheet(item: $selected) { selection in
+            LiveSessionDetailView(sessionID: selection.id, monitor: selection.monitor)
+        }
+        .sheet(item: $chatSession) { AgentChatSheet(session: $0) }
+        .onAppear { visible = true }
+        .onDisappear { visible = false }
+        .task(id: PollID(hosts: hosts, active: visible && scenePhase == .active && !adding, refresh: refreshID)) {
+            guard visible, scenePhase == .active, !adding else { return }
+            await overview.run(hosts: hosts)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionSections(at date: Date) -> some View {
+        let groups = overview.groups(at: date, query: query, preferences: preferences, projects: model.sessionProjects)
+        if !hosts.isEmpty && groups.isEmpty {
+            Section {
+                if overview.computers.isEmpty || overview.computers.contains(where: { $0.monitor.snapshot == nil && $0.monitor.refreshing }) {
+                    HStack { ProgressView(); Text("Finding sessions…") }.font(.subheadline)
+                } else {
+                    Text(!query.isEmpty ? "No matching sessions"
+                         : overview.connectedCount(at: date) == 0 && overview.computers.contains(where: { $0.monitor.message != nil })
+                         ? "No computers connected" : "No sessions running on the connected computers")
+                        .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
+                }
+            }
+        }
+        ForEach(groups) { group in
+            Section {
+                ForEach(group.sessions) { session in
+                    LiveSessionCard(session: session, fresh: group.fresh, showHost: true, onChat: { chatSession = session }) {
+                        if let computer = overview.computers.first(where: { $0.id == session.host.id }) {
+                            selected = OverviewSelection(session: session, monitor: computer.monitor)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                }
+            } header: { Text("\(group.title) · \(group.sessions.count)") }
+            footer: {
+                if !group.fresh { Text("These computers aren't connected. Reconnect before opening a session.") }
+            }
+        }
+        let problems = overview.computers.filter { $0.monitor.message != nil }
+        if !problems.isEmpty {
+            Section("Connections") {
+                ForEach(problems) { computer in
+                    NavigationLink { LiveHostView(hostID: computer.id) } label: {
+                        HStack {
+                            Text(computer.host.name)
+                            Spacer()
+                            Text(computer.monitor.fingerprint != nil ? "Verify connection" : "Offline")
+                                .font(.caption).foregroundStyle(PhrenTheme.warning)
+                        }
+                    }.accessibilityIdentifier("overview-reconnect:\(computer.id)")
+                }
+            }
+        }
     }
 }
 
@@ -64,6 +147,12 @@ final class LiveHostMonitor {
     var refreshing = false
     var polling = false
     private var generation = UUID()
+    @ObservationIgnored private let fetchSnapshot: (LiveHost, Date?) async throws -> MoshiWorkspaces
+    @ObservationIgnored private let pollInterval: Duration
+
+    init(pollInterval: Duration = .seconds(10), fetch: @escaping (LiveHost, Date?) async throws -> MoshiWorkspaces = { try await LiveHostMonitor.fetch($0, previousUpdate: $1) }) {
+        self.pollInterval = pollInterval; self.fetchSnapshot = fetch
+    }
 
     func run(host: LiveHost) async {
         let run = UUID()
@@ -73,7 +162,7 @@ final class LiveHostMonitor {
         while !Task.isCancelled {
             refreshing = true
             do {
-                let value = try await Self.fetch(host, previousUpdate: lastUpdated)
+                let value = try await fetchSnapshot(host, lastUpdated)
                 try Task.checkCancellation()
                 guard generation == run else { return }
                 snapshot = value
@@ -89,12 +178,30 @@ final class LiveHostMonitor {
             }
             refreshing = false
             if fingerprint != nil { return }
-            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            do { try await Task.sleep(for: pollInterval) } catch { return }
         }
     }
 
     static func fetch(_ host: LiveHost, previousUpdate: Date? = nil) async throws -> MoshiWorkspaces {
         #if DEBUG && targetEnvironment(simulator)
+        if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--all-sessions-fixture") {
+            if ProcessInfo.processInfo.arguments.contains("--all-sessions-empty") {
+                return try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
+            }
+            let remote = host.id.uuidString.hasSuffix("000002")
+            if remote && previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--all-sessions-offline") {
+                throw LiveConnectionError.disconnected
+            }
+            let title = remote ? "Review Linux deployment" : "Build the iPhone overview"
+            let finished = previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--all-sessions-change")
+            let status = remote ? "waiting" : finished ? "done" : "working"
+            let other = remote ? "Inspect logs" : "Check project status"
+            return try MoshiWorkspaces.read(Data("""
+            {"kind":"herdr","groups":[{"id":"w1","label":"Shared project","children":[
+            {"id":"w1:t1","label":"1","title":"\(title)","agent":"codex","agentStatus":"\(status)","cwd":"/work/phone"},
+            {"id":"w1:t2","label":"2","title":"\(other)","agent":"codex","agentStatus":"idle","cwd":"/work/phone"}]}]}
+            """.utf8))
+        }
         if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--automatic-sessions-fixture") {
             if ProcessInfo.processInfo.arguments.contains("--session-discovery-offline") { throw LiveConnectionError.disconnected }
             if ProcessInfo.processInfo.arguments.contains("--session-details-fixture") {
@@ -308,7 +415,7 @@ private struct LiveHostView: View {
     }
 }
 
-private extension LiveHostMonitor {
+extension LiveHostMonitor {
     func isFresh(at date: Date) -> Bool {
         polling && message == nil && lastUpdated.map { date.timeIntervalSince($0) < 25 } == true
     }
@@ -356,6 +463,8 @@ private struct LiveSessionCard: View {
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
     let session: DiscoveredMoshiSession
     let fresh: Bool
+    var showHost = false
+    var onChat: (() -> Void)? = nil
     let onDetails: () -> Void
     private var match: SessionProjectMatch? {
         (try? LiveSessionPreferences.read(data))?.projectMatch(hostID: session.host.id, cwd: session.tab.cwd,
@@ -364,7 +473,7 @@ private struct LiveSessionCard: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            AgentConversationLink(session: session) {
+            AgentConversationLink(session: session, onOpenInPhren: onChat) {
                 HStack(spacing: 10) {
                     Image(systemName: session.tab.activity.icon)
                         .font(.system(size: 14, weight: .semibold))
@@ -373,8 +482,8 @@ private struct LiveSessionCard: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(session.tab.displayTitle).font(.subheadline.weight(.semibold))
-                            .foregroundStyle(PhrenTheme.text).lineLimit(2)
-                        Text([match?.project.name ?? session.workspaceName, session.tab.agent,
+                            .foregroundStyle(PhrenTheme.text).lineLimit(showHost ? 1 : 2)
+                        Text([showHost ? session.host.name : nil, match?.project.name ?? session.workspaceName, session.tab.agent,
                               session.tab.status + (fresh ? "" : " · stale")].compactMap { $0 }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(PhrenTheme.textMuted).lineLimit(2)
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -383,7 +492,8 @@ private struct LiveSessionCard: View {
                 .frame(minHeight: 72).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("live-chat:\(session.workspaceID):\(session.tab.id)")
+            .accessibilityIdentifier(showHost ? "overview-chat:\(session.host.id):\(session.host.muxID):\(session.workspaceID):\(session.tab.id)"
+                                     : "live-chat:\(session.workspaceID):\(session.tab.id)")
             .disabled(!fresh)
             Button(action: onDetails) {
                 Image(systemName: "info.circle").font(.system(size: 17))
@@ -391,7 +501,8 @@ private struct LiveSessionCard: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain).accessibilityLabel("Session details")
-            .accessibilityIdentifier("live-detail:\(session.workspaceID):\(session.tab.id)")
+            .accessibilityIdentifier(showHost ? "overview-detail:\(session.host.id):\(session.host.muxID):\(session.workspaceID):\(session.tab.id)"
+                                     : "live-detail:\(session.workspaceID):\(session.tab.id)")
         }
         .padding(.trailing, 2)
         .background(PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 14))

@@ -7,6 +7,10 @@ own colors and identity.
 - Give the work most of the screen. A session is a compact title and metadata
   row, with one primary tap to chat. Put terminal, Moshi, graph, and metadata in
   session details instead of repeating a second action row on every card.
+- Put sessions across computers directly on Agents. Working and waiting come
+  first; name the computer on every row. Connection management belongs below
+  the work. A computer going offline must not hide or delay another computer's
+  sessions, and previous state must be visibly separate from live activity.
 - Connection freshness and counts belong in a quiet inline status area. Herdr
   belongs in the computer toolbar. Neither needs a large promotional tile.
 - Keep controls at least 44 points to touch. Reduce padding, duplicate controls,

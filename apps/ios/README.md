@@ -18,7 +18,11 @@ on **Active**; **Backlog** and **Done** are separate searchable views. Task rows
 show a short preview; tap the text to read the full plan, or use the checkbox
 to complete it. Projects appear above agent setup links; the **More** menu
 keeps Skills, Agent instructions, and Live sessions available without scrolling.
-The Agents tab also includes Skills and Agent instructions below your computers.
+The **Agents** tab opens with sessions from every saved computer, grouped with
+working and waiting sessions first, followed by idle, done, and other open tabs.
+Each compact row names its computer; tap to chat or use its info button for
+terminal and session details. Search matches computers, projects, titles, agents,
+and folders. Computer connections, Skills, and Agent instructions remain below.
 
 **Memory maintenance**, available from Projects and Settings, is optional. Its
 overview groups candidates, stale memories, and conflicts by project and store.
@@ -371,6 +375,16 @@ and graph handoffs, direct live-row opening, multiple matches, and offline hosts
 The existing Moshi tests cover manual shortcuts, encoding, persistence, and removal.
 
 ### Live Herdr sessions over Tailscale / SSH
+
+The Agents overview polls saved computers independently while visible and active.
+A slow computer does not delay other results. Offline or paused computers keep
+their previous rows under **Last seen**, with chat opening disabled until that
+computer reconnects. Its connection row opens the existing verification/settings
+flow. Closed tabs disappear after the next successful read. Refresh and
+pull-to-refresh retry all computers; reconnect retains each computer's last
+snapshot in memory. Removing a computer or changing its Herdr server discards
+the old destination. The full computer, Herdr server, workspace, and tab identity
+is preserved when opening chat and details, even when IDs repeat on two machines.
 
 Inside a computer, switch between **Workspaces** and **Activity**. Activity groups
 tabs by their reported state, putting errors and waiting sessions first. Search

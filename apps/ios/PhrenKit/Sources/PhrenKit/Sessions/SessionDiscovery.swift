@@ -54,7 +54,8 @@ public struct DiscoveredMoshiSession: Equatable, Identifiable, Sendable {
 
     public func matches(_ query: String, projectName: String? = nil) -> Bool {
         let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
-        let text = [workspaceName, tab.displayTitle, tab.label, tab.agent ?? "", tab.cwd ?? "", projectName ?? ""].joined(separator: " ")
+        let text = [host.name, host.address, host.herdrSession ?? "default", workspaceName,
+                    tab.displayTitle, tab.label, tab.agent ?? "", tab.cwd ?? "", projectName ?? ""].joined(separator: " ")
         return terms.allSatisfy { text.localizedCaseInsensitiveContains($0) }
     }
 

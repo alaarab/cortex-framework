@@ -6,6 +6,7 @@ import SwiftUI
 struct AgentConversationLink<LabelContent: View>: View {
     let session: DiscoveredMoshiSession
     var honorsPreference = true
+    var onOpenInPhren: (() -> Void)? = nil
     @ViewBuilder var label: LabelContent
     @AppStorage("agents.preferMoshi.v1") private var preferMoshi = false
     @Environment(\.openURL) private var openURL
@@ -16,7 +17,8 @@ struct AgentConversationLink<LabelContent: View>: View {
         Button {
             if honorsPreference && preferMoshi, let url = try? session.link().url() {
                 openURL(url) { accepted in if !accepted { error = "Moshi couldn't be opened. Choose Phren chat in Settings or open Moshi on this iPhone." } }
-            } else { showingChat = true }
+            } else if let onOpenInPhren { onOpenInPhren() }
+            else { showingChat = true }
         } label: { label }
         .sheet(isPresented: $showingChat) { AgentChatSheet(session: session) }
         .modifier(MoshiLaunchAlert(error: $error))

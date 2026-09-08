@@ -493,11 +493,15 @@ final class AppModel {
                 // Keep discovery fixtures from changing later tests' connection setup.
                 let defaults = UserDefaults(suiteName: "phren.ui-tests")!
                 defaults.set(ProcessInfo.processInfo.arguments.contains("--prefer-moshi"), forKey: "agents.preferMoshi.v1")
-                let fixtureHostID = UUID(uuidString: "A1000000-0000-0000-0000-000000000001")!
+                let fixtureHostIDs = ["A1000000-0000-0000-0000-000000000001", "A1000000-0000-0000-0000-000000000002"].map { UUID(uuidString: $0)! }
                 if !ProcessInfo.processInfo.arguments.contains("--automatic-sessions-fixture"),
                    let data = defaults.data(forKey: "sessions.live.preferences.v1"),
-                   (try? LiveSessionPreferences.read(data).hosts.contains { $0.id == fixtureHostID }) == true {
-                    defaults.set(try LiveSessionPreferences.removing(fixtureHostID, from: data), forKey: "sessions.live.preferences.v1")
+                   let saved = try? LiveSessionPreferences.read(data) {
+                    var cleaned = data
+                    for id in fixtureHostIDs where saved.hosts.contains(where: { $0.id == id }) {
+                        cleaned = try LiveSessionPreferences.removing(id, from: cleaned)
+                    }
+                    if cleaned != data { defaults.set(cleaned, forKey: "sessions.live.preferences.v1") }
                 }
                 for owner in ["sample", "team"] {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ui-tests-\(UUID().uuidString)")
@@ -515,6 +519,13 @@ final class AppModel {
                                                 fingerprint: "SHA256:" + String(repeating: "A", count: 43))
                         let defaults = UserDefaults(suiteName: "phren.ui-tests")!
                         defaults.set(try LiveSessionPreferences.saving(host, in: Data()), forKey: "sessions.live.preferences.v1")
+                        if ProcessInfo.processInfo.arguments.contains("--all-sessions-fixture") {
+                            let remote = try LiveHost(id: UUID(uuidString: "A1000000-0000-0000-0000-000000000002")!,
+                                                      name: "Test Linux", address: "remote.fixture.invalid", username: "fixture",
+                                                      fingerprint: "SHA256:" + String(repeating: "B", count: 43))
+                            defaults.set(try LiveSessionPreferences.saving(remote, in: defaults.data(forKey: "sessions.live.preferences.v1")!),
+                                         forKey: "sessions.live.preferences.v1")
+                        }
                         defaults.set(Data(), forKey: "sessions.moshi.links.v1")
                     }
                     if ProcessInfo.processInfo.arguments.contains("--workflow-fixture") {
