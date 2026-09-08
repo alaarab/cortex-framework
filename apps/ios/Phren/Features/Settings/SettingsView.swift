@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var confirmSignOut = false
     @State private var showAddStore = false
     @State private var removingStore: StoreDescriptor?
+    @AppStorage("agents.preferMoshi.v1") private var preferMoshi = false
     /// The same writable (store, project) list the App Intents resolve
     /// against — read through `PhrenCapture` rather than rebuilt from
     /// `mergedProjects` so the picker can't offer a destination capture
@@ -66,6 +67,15 @@ struct SettingsView: View {
                     Button("Memory maintenance", systemImage: "wrench.and.screwdriver") {
                         model.showingMemoryMaintenance = true
                     }
+                }
+
+                Section {
+                    Picker("Open agents in", selection: $preferMoshi) {
+                        Text("Phren chat").tag(false)
+                        Text("Moshi").tag(true)
+                    }.accessibilityIdentifier("agent-chat-preference")
+                } header: { Text("Agent conversations") } footer: {
+                    Text("Phren chats with your existing Codex and Claude Code sessions. The terminal remains available in Moshi.")
                 }
 
                 Section("Account") {

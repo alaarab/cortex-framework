@@ -23,13 +23,13 @@ public enum LiveConnectionError: LocalizedError, Equatable {
         case .timeout: return "The connection timed out. Check Tailscale, SSH, and that moshi-hook is running."
         case .disconnected: return "The connection closed before session status arrived. Check that moshi-hook is running and SSH forwarding is allowed."
         case .response(let status): return "The Moshi hook returned HTTP \(status). Check or update moshi-hook on the computer."
-        case .oversized: return "The Moshi hook response exceeded the 1 MB limit."
+        case .oversized: return "The Moshi hook response exceeded this request's size limit."
         }
     }
 }
 
-/// One bounded, cancellable read. No shell, remote commands, local listener,
-/// redirects, approval actions, or arbitrary gateway routes are exposed.
+/// Bounded, cancellable requests through a pinned SSH connection. Only the
+/// workspace, pane, transcript, and exact-session prompt routes are exposed.
 public enum MoshiConnection {
     public static func fetch(host: LiveHost, privateKey: Data) async throws -> MoshiWorkspaces {
         try host.validate()
@@ -38,7 +38,8 @@ public enum MoshiConnection {
         return try MoshiWorkspaces.read(data)
     }
 
-    static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey) async throws -> Data {
+    static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey, request: GatewayRequest = .workspaces) async throws -> Data {
+        try host.validate()
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let result = loop.makePromise(of: Data.self)
         let exchange = Exchange(result: result)
@@ -60,7 +61,7 @@ public enum MoshiConnection {
                     inboundChildChannelInitializer: { channel, _ in
                         channel.eventLoop.makeFailedFuture(LiveConnectionError.disconnected)
                     })
-                try channel.pipeline.syncOperations.addHandlers(ssh, GatewayChannel(exchange: exchange))
+                try channel.pipeline.syncOperations.addHandlers(ssh, GatewayChannel(exchange: exchange, request: request))
             }
         }
         return try await withTaskCancellationHandler {
@@ -133,7 +134,8 @@ private final class DeviceAuthentication: NIOSSHClientUserAuthenticationDelegate
 private final class GatewayChannel: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     let exchange: Exchange
-    init(exchange: Exchange) { self.exchange = exchange }
+    let request: GatewayRequest
+    init(exchange: Exchange, request: GatewayRequest) { self.exchange = exchange; self.request = request }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         guard event is UserAuthSuccessEvent, !exchange.finished else { return }
@@ -143,15 +145,18 @@ private final class GatewayChannel: ChannelInboundHandler {
             child.futureResult.whenFailure { [exchange] in exchange.finish(.failure($0)) }
             let target = SSHChannelType.DirectTCPIP(targetHost: "127.0.0.1", targetPort: 24543,
                 originatorAddress: try SocketAddress(ipAddress: "127.0.0.1", port: 0))
-            ssh.createChannel(child, channelType: .directTCPIP(target)) { [exchange] channel, type in
+            ssh.createChannel(child, channelType: .directTCPIP(target)) { [exchange, request] channel, type in
                 guard case .directTCPIP = type else {
                     return channel.eventLoop.makeFailedFuture(LiveConnectionError.disconnected)
+                }
+                if request.webSocket {
+                    return installTranscriptHandlers(channel: channel, exchange: exchange, request: request)
                 }
                 return channel.eventLoop.makeCompletedFuture {
                     try channel.pipeline.syncOperations.addHandlers(
                         SSHHTTPBytes(), HTTPRequestEncoder(),
                         ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)),
-                        GatewayResponse(exchange: exchange))
+                        GatewayResponse(exchange: exchange, request: request))
                 }
             }
         } catch { exchange.finish(.failure(error)) }
@@ -161,7 +166,7 @@ private final class GatewayChannel: ChannelInboundHandler {
 }
 
 /// HTTPRequestEncoder emits IOData, while the SSH child expects SSHChannelData.
-private final class SSHHTTPBytes: ChannelDuplexHandler {
+final class SSHHTTPBytes: ChannelDuplexHandler {
     typealias InboundIn = SSHChannelData
     typealias InboundOut = ByteBuffer
     typealias OutboundIn = IOData
@@ -182,13 +187,21 @@ final class GatewayResponse: ChannelInboundHandler {
     typealias InboundIn = HTTPClientResponsePart
     typealias OutboundOut = HTTPClientRequestPart
     let exchange: Exchange
+    let request: GatewayRequest
     private var body = Data()
     private var receivedHead = false
-    init(exchange: Exchange) { self.exchange = exchange }
+    init(exchange: Exchange, request: GatewayRequest = .workspaces) { self.exchange = exchange; self.request = request }
     func channelActive(context: ChannelHandlerContext) {
-        let head = HTTPRequestHead(version: .http1_1, method: .GET, uri: "/v1/workspaces",
-            headers: HTTPHeaders([("Host", "127.0.0.1:24543"), ("Accept", "application/json"), ("Connection", "close")]))
+        var headers = HTTPHeaders([("Host", "127.0.0.1:24543"), ("Accept", "application/json"), ("Connection", "close")])
+        if let body = request.body {
+            headers.add(name: "Content-Type", value: "application/json")
+            headers.add(name: "Content-Length", value: String(body.count))
+        }
+        let head = HTTPRequestHead(version: .http1_1, method: request.body == nil ? .GET : .POST, uri: request.path, headers: headers)
         context.write(wrapOutboundOut(.head(head)), promise: nil)
+        if let body = request.body {
+            context.write(wrapOutboundOut(.body(.byteBuffer(ByteBuffer(bytes: body)))), promise: nil)
+        }
         context.writeAndFlush(wrapOutboundOut(.end(nil))).whenFailure { [exchange] in exchange.finish(.failure($0)) }
     }
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {

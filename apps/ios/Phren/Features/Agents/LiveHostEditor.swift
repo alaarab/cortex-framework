@@ -46,7 +46,7 @@ struct LiveHostEditor: View {
                 if let fingerprint = existing?.fingerprint {
                     Text("Trusted host: \(fingerprint)").font(.caption.monospaced()).textSelection(.enabled)
                 }
-                Text("The private key stays on this iPhone. Phren reads the hook's default Herdr server; it does not start sessions.")
+                Text("The private key stays on this iPhone. Phren connects to existing Herdr sessions for status and agent chat.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let error { Section { Text(error).foregroundStyle(.orange) } }

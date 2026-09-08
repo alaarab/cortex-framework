@@ -29,6 +29,11 @@ final class AgentsLayoutTests: XCTestCase {
         capture(app, name: "Computer sessions after returning")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(intro.waitForExistence(timeout: 5))
+        // Larger text requires scrolling to reach the computer. Navigation
+        // correctly restores that offset; return to the top before checking it.
+        for _ in 0..<4 where intro.frame.minY < app.navigationBars.firstMatch.frame.maxY {
+            app.collectionViews.firstMatch.swipeDown()
+        }
         XCTAssertGreaterThanOrEqual(intro.frame.minY, app.navigationBars.firstMatch.frame.maxY)
         assertRenderedTitle(app, title: "Live sessions")
         capture(app, name: "Agents after navigating back")

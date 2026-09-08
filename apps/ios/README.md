@@ -245,10 +245,36 @@ queued files and their original SHAs until flush can check them. Pending queue
 schema 2 added guarded authored edits; schema 3 adds individual skill switches.
 Schema 1 and 2 queues upgrade while retaining all existing operations.
 
+### Native agent chat
+
+Tap a live agent card to read and reply to its existing Codex or Claude Code
+conversation inside Phren. **Project session → Chat with agent** and the graph's
+**Session → Chat with agent** discover the project's running sessions too. If a
+tab contains several supported agents, choose its pane before chatting.
+
+Chat uses that computer's pinned SSH connection, workspace, tab, pane, provider,
+and conversation ID. It rechecks the pane before sending, so switching computers
+in Moshi cannot redirect a native reply. **Settings → Agent conversations → Open
+agents in** makes Moshi an optional default; **Open terminal in Moshi** remains
+available from chat options.
+
+The plus button adds project summaries, findings, or skills to a draft for review.
+Chat options also open project memory, skills, and the graph. Failed or uncertain
+delivery preserves the draft and never retries automatically. Drafts survive
+reopening during the current app process; chats and drafts are not synced to Git.
+
+This first adapter requires the computer's existing `moshi-hook` (verified with
+0.3.19) and default Herdr server, but does not require the Moshi iPhone app. Recent
+transcript snapshots refresh every three seconds while visible; full-history
+loading and token streaming are not yet available. Tools expand inline. Text
+replies are supported; attachments, in-app approvals, and starting/stopping agents
+remain outside this version. A blocked agent requires an answer in the terminal.
+See [connection contracts and validation](AGENT_CONNECTIONS.md#native-conversation).
+
 ### Automatic Moshi session handoff
 
-After connecting a computer in **Agents**, tap **Open [workspace] in Moshi** on
-a live tab. Phren uses the hook's workspace ID directly when that workspace
+After connecting a computer in **Agents**, tap the external-app icon on a live
+card, or **Open [workspace] in Moshi** in its details. Phren uses the hook's workspace ID directly when that workspace
 has one tab, and includes the selected tab ID when there are several. No session
 link form or project mapping is needed. The action opens Moshi directly in one
 tap, including from session details. Long-press the action to copy its link.
@@ -299,7 +325,7 @@ matches session titles, workspace names, agents, folders, and linked projects.
 Cards use the hook's conversation title when available, with the tab label as a
 fallback, plus status icons and a direct Moshi action.
 
-Tap a card to open **Session details**: its full title, live state, computer,
+Tap the card's info button to open **Session details**: its full title, live state, computer,
 workspace, tab, agent and pane counts when reported, and a copyable folder path.
 Project memory links open the matched project's findings, tasks, and graph;
 **Change project link** corrects the association. Details track the live session
@@ -309,7 +335,7 @@ Stale sessions stay readable with opening disabled until reconnection.
 **Open [workspace] in Moshi** continues the session there. In Moshi, tap the agent
 icon to switch to [Chat View](https://getmoshi.app/docs/chat-view) when available.
 Phren's handoff selects the live session; it does not request a particular Moshi
-view or read the conversation transcript.
+view. Native Phren chat reads the transcript through SSH separately.
 
 Open **Agents → Add computer** (also available from Projects and graph options).
 Enter the computer's Tailscale hostname/IP, SSH port, and user. Create a device
@@ -334,8 +360,8 @@ held in memory and explicitly marked stale after a failure or pause.
 This adapter was verified with `moshi-hook 0.3.19` and currently supports its
 **default Herdr server**. Entries are tabs, possibly aggregating multiple agent
 panes. Unknown states stay unknown. Other gateway kinds show an unsupported
-message. Named servers, tmux discovery, transcripts, approvals, starting or
-stopping agents are not implemented.
+message. Named servers, tmux discovery, approvals, and starting or stopping
+agents are not implemented. Native chat discovers individual panes separately.
 
 **Link to project** associates an observed directory with an explicit full
 store ID and project on this phone. Subdirectories match at path boundaries,

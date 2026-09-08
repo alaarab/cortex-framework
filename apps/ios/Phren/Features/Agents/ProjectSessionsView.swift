@@ -66,6 +66,7 @@ private final class ProjectSessionDiscovery {
 struct ProjectSessionsView: View {
     let storeID: String
     let project: String
+    var openChat = false
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
@@ -75,6 +76,7 @@ struct ProjectSessionsView: View {
     @State private var visible = false
     @State private var refreshID = UUID()
     @State private var error: String?
+    @State private var chatSession: DiscoveredMoshiSession?
 
     private var preferences: LiveSessionPreferences? { try? LiveSessionPreferences.read(data) }
     private var target: SessionProject { SessionProject(storeID: storeID, name: project) }
@@ -129,6 +131,7 @@ struct ProjectSessionsView: View {
             }
             .phrenScreen()
             .modifier(MoshiLaunchAlert(error: $error))
+            .sheet(item: $chatSession) { AgentChatSheet(session: $0) }
             .onAppear { visible = true }
             .onDisappear { visible = false }
             .task(id: DiscoveryIdentity(data: data, active: visible && scenePhase == .active, refresh: refreshID)) {
@@ -151,18 +154,20 @@ struct ProjectSessionsView: View {
                     Text("\(session.host.name) · \(session.workspaceName)").font(.caption).lineLimit(1)
                     Text("\(session.tab.agent ?? "Terminal") · \(session.tab.status)\(fresh ? "" : " · refresh needed")").font(.caption)
                     if let cwd = session.tab.cwd { Text(cwd).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                    if session.hasHostCollision(in: discovery.sessions) {
+                    if !openChat && session.hasHostCollision(in: discovery.sessions) {
                         Text("Also found on another computer. Check the computer shown in Moshi.")
                             .font(.caption).foregroundStyle(.orange)
                     }
-                    Label(assign ? "Use for \(project) and open in Moshi" : "Open in Moshi", systemImage: "arrow.up.forward.app")
+                    Label(openChat ? (assign ? "Use for \(project) and chat" : "Chat with agent")
+                          : (assign ? "Use for \(project) and open in Moshi" : "Open in Moshi"),
+                          systemImage: openChat ? "bubble.left.and.bubble.right" : "arrow.up.forward.app")
                         .font(.callout).foregroundStyle(PhrenTheme.accent)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!fresh || (try? session.link()) == nil || (assign && session.tab.cwd == nil))
+            .disabled(!fresh || (!openChat && (try? session.link()) == nil) || (assign && session.tab.cwd == nil))
             .accessibilityIdentifier("discovered-session:\(session.host.id):\(session.workspaceID):\(session.tab.id)")
         }
     }
@@ -177,15 +182,18 @@ struct ProjectSessionsView: View {
                 error = "This session changed or needs a refresh. Choose it again from the current list."
                 return
             }
-            let url = try current.link().url()
-            guard url == (try session.link().url()) else {
-                error = "This session's destination changed. Choose it again from the current list."
-                return
+            if !openChat {
+                guard try current.link().url() == session.link().url() else {
+                    error = "This session's destination changed. Choose it again from the current list."
+                    return
+                }
             }
             if assign, let cwd = current.tab.cwd {
                 data = try LiveSessionPreferences.assigning(hostID: session.host.id, directory: cwd,
                                                             storeID: storeID, project: project, in: data)
             }
+            if openChat { chatSession = current; return }
+            let url = try current.link().url()
             openURL(url) { accepted in
                 if accepted { dismiss() }
                 else { error = "Moshi couldn't be opened on this iPhone. Install it and open this computer's session there first." }

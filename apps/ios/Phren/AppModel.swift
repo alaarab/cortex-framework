@@ -474,6 +474,7 @@ final class AppModel {
             do {
                 // Keep discovery fixtures from changing later tests' connection setup.
                 let defaults = UserDefaults(suiteName: "phren.ui-tests")!
+                defaults.set(ProcessInfo.processInfo.arguments.contains("--prefer-moshi"), forKey: "agents.preferMoshi.v1")
                 let fixtureHostID = UUID(uuidString: "A1000000-0000-0000-0000-000000000001")!
                 if !ProcessInfo.processInfo.arguments.contains("--automatic-sessions-fixture"),
                    let data = defaults.data(forKey: "sessions.live.preferences.v1"),

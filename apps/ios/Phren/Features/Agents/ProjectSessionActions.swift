@@ -14,6 +14,7 @@ struct ProjectSessionActions: View {
     @AppStorage("sessions.live.preferences.v1") private var liveData = Data()
     @State private var editing = false
     @State private var discovering = false
+    @State private var chatting = false
     @State private var error: String?
 
     private var link: MoshiSessionLink? {
@@ -30,6 +31,7 @@ struct ProjectSessionActions: View {
                         NavigationStack { ProjectSessionEditor(storeId: storeId, project: project) }
                     }
                     .sheet(isPresented: $discovering) { ProjectSessionsView(storeID: storeId, project: project) }
+                    .sheet(isPresented: $chatting) { ProjectSessionsView(storeID: storeId, project: project, openChat: true) }
                     .modifier(MoshiLaunchAlert(error: $error))
             case .section:
                 Section("Session") {
@@ -44,6 +46,12 @@ struct ProjectSessionActions: View {
         // Discovery is the default when a computer is configured. Existing
         // manual shortcuts remain usable for tmux and unsupported connections.
         let hasComputers = ((try? LiveSessionPreferences.read(liveData))?.hosts.isEmpty == false)
+        let chatButton = Button("Chat with agent", systemImage: "bubble.left.and.bubble.right") { chatting = true }
+        switch presentation {
+        case .menu: chatButton
+        case .section:
+            chatButton.sheet(isPresented: $chatting) { ProjectSessionsView(storeID: storeId, project: project, openChat: true) }
+        }
         if hasComputers || link == nil {
             let discoverButton = Button("Open in Moshi", systemImage: "arrow.up.forward.app") { discovering = true }
             switch presentation {

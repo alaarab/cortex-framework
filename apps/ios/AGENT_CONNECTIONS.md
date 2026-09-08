@@ -1,8 +1,9 @@
 # Agent connections: Moshi and Herdr
 
 Phren manages project memory, skills, findings, tasks, and the graph. The iPhone
-app also reads live Herdr session status through an existing Moshi hook.
-Moshi beside Phren on the iPhone remains optional for interacting with sessions.
+app reads live Herdr status and supports native Codex and Claude Code chat
+through an existing Moshi hook. The Moshi iPhone app is optional; its installed
+computer helper is still required for this adapter.
 
 ## Implemented connection
 
@@ -10,13 +11,15 @@ Agents → Add computer adds a computer with its own device SSH key and a
 verified host fingerprint. Tailscale provides network reachability; Phren does
 not borrow the Moshi app's credentials or tunnel. No Phren gateway is required.
 The SSH channel only opens the remote loopback address `127.0.0.1:24543` and
-issues `GET /v1/workspaces`. There is no shell or arbitrary route API.
+exposes workspace and pane discovery, recent transcripts, and exact-session
+prompt delivery. There is no shell or arbitrary route API.
 
 The endpoint was observed on installed `moshi-hook 0.3.19`, which returns
 `kind`, `capabilities`, and workspace `groups` with tab `children`. Tab metadata
 includes `agentStatus`, `agent`, `cwd`, and optionally `agentPaneCount`. The
 adapter supports the default Herdr server, not tmux or named server discovery.
-A tab can contain several agents; the screen does not invent per-pane records.
+Status cards summarize tabs. Native chat separately discovers the actual panes
+and asks which agent to open when several supported conversations are present.
 An agent conversation's `sessionId` is **not** a Herdr server/session name and
 must not be used as one in a Moshi URL. Unknown states remain unknown.
 
@@ -32,13 +35,63 @@ future schemas without replacing the original data.
 
 The exported SSH authorization line restricts forwarding to the gateway and
 disables shell commands. The hook itself offers more capabilities than status;
-this is a client limited to reads, not a new server-side read-only credential
-scope. The transport exposes no approval, terminal input, or transcript calls.
+this authorization is not a server-side read-only credential scope. The chat
+client uses `/v1/prompt` for explicit text replies but exposes no arbitrary
+terminal keys, approval responses, or agent launch/stop operations.
 
 See [phone setup and tests](README.md#live-herdr-sessions-over-tailscale--ssh),
 [Moshi gateway roles](https://getmoshi.app/docs/install-desktop),
 [workspace discovery](https://getmoshi.app/docs/debug-multiplexer-chooser), and
 [Tailscale setup](https://getmoshi.app/docs/tailscale).
+
+## Native conversation
+
+Tapping a live card opens Phren chat by default. Projects and graph node details
+also offer **Chat with agent**. **Settings → Agent conversations → Open agents
+in** can make normal agent taps open Moshi; explicit chat actions still use Phren.
+Cards offer an explicit **Chat** action, an optional Moshi shortcut, and an info
+button for full session details.
+
+`GET /v1/workspaces/panes?groupId=…&childId=…` supplies the pane, provider, and
+conversation ID. Phren pins that tuple together with the configured computer,
+workspace, and tab. It never selects the newest transcript or guesses by title.
+The pane is checked again immediately before each prompt. If its provider or
+conversation changes, sending stops until the user reopens chat. Native routing
+uses the chosen computer's SSH connection, independent of Moshi's current card.
+
+The observed `moshi-hook 0.3.19` contract is:
+
+- `/v1/transcripts?source=codex|claude&session=…&limit=200` upgrades to a WebSocket
+  and returns a `backlog` frame containing numbered raw JSONL entries.
+- `POST /v1/prompt` accepts JSON `{source, sessionId, pane, tab, text}` and returns
+  `{ok: true}` when accepted. This acknowledges delivery, not agent completion.
+
+The current reader fetches one recent snapshot every three seconds while chat
+is visible and active. Each request has a 20-second deadline; transcripts are
+bounded to 8 MB, other responses to 1 MB, and prompts to 32 KB. Backgrounding,
+leaving chat, or changing the computer configuration cancels requests. This is
+recent conversation polling, not token streaming or full-history pagination.
+Codex response items and Claude message blocks become native conversation rows;
+tool calls/results are collapsed. Reasoning and system records are excluded.
+
+Replies require a deliberate send. There is no retry on reconnect. If delivery
+is uncertain, the draft remains and the user is told to check the conversation
+before trying again. Drafts survive reopening within the app process and are
+keyed by the full conversation identity. Transcripts and drafts are not written
+to Git or persisted to disk. The context picker inserts selected project summary,
+finding, or skill text into the draft for review. Context uses the selected
+pane's directory and full store identity. Project memory, skills, and graph are
+also reachable from chat options.
+
+Attachments, in-app approvals, starting/stopping agents, and other providers
+are not implemented. Recognized blocked/waiting states disable reply and direct
+the user to the terminal. **Open terminal in Moshi** remains available.
+
+Core tests cover transcript normalization and identity guards. Transport tests
+cover fragmented frames and limits. An opt-in `PHREN_CHAT_E2E_FIXTURE` test uses
+an inert echo process in a disposable Herdr pane and a pinned SSH relay to the
+installed helper; it never prompts a real user's agent. UI tests cover native
+read/reply, pane choice, failed drafts, project context, and the Moshi preference.
 
 ## Optional iPhone handoff
 
@@ -99,9 +152,9 @@ and that destination stays correct after row refreshes and returning to the app.
 - Add named Herdr servers and tmux only after observing their discovery contract.
 - Retain provider session/workspace/tab/pane metadata if the desktop registry
   becomes a source. Never execute its `focus` argv from a phone payload.
-- Consider reviewed task handoffs after status and project linking are proven.
-  Phren can supply context and tasks while Moshi handles terminal interaction.
+- Add full-history loading, streaming updates, attachments, and structured
+  approvals after verifying the helper contracts and their lifecycle behavior.
 
 The CLI's existing `AgentRecord`/`JoinedAgent` and Herdr provider remain in
 `packages/cli/src/agents/`. No process supervisor, remote task execution,
-transcript collection, new daemon, or webhook notifications are added here.
+background transcript collection, new daemon, or webhook notifications are added here.

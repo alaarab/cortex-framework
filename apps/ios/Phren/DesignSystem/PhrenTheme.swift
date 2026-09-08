@@ -1,24 +1,23 @@
 import SwiftUI
 
-/// Lighter warm charcoal surfaces with small, purposeful touches of Phren color.
+/// Cool slate surfaces, clear cyan actions, and Phren's lavender accents.
 enum PhrenTheme {
-    static let bg = Color(hex: 0x29282A)
-    static let bgSunken = Color(hex: 0x232225)
-    static let surface = Color(hex: 0x383638)
-    static let surfaceRaised = Color(hex: 0x494648)
+    static let bg = Color(hex: 0x292D3C)
+    static let bgSunken = Color(hex: 0x242837)
+    static let surface = Color(hex: 0x373D50)
+    static let surfaceRaised = Color(hex: 0x48516A)
 
-    static let text = Color(hex: 0xF7F4EF)
-    static let textSecondary = Color(hex: 0xDCD5CF)
-    static let textMuted = Color(hex: 0xC0B9B3)
-    static let textDim = Color(hex: 0xB0AAA4)
+    static let text = Color(hex: 0xF3F2F8)
+    static let textSecondary = Color(hex: 0xDCDFEF)
+    static let textMuted = Color(hex: 0xBCC3D8)
+    static let textDim = Color(hex: 0xABB3CA)
 
-    // Navigation stays neutral; lavender marks selected controls and actions.
-    static let navigation = Color(hex: 0xECE7E1)
-    static let accent = Color(hex: 0xB5AFE3)
-    static let accentHover = Color(hex: 0xCBC6EF)
-    static let accentSolid = Color(hex: 0x655A99)
-    static let cyan = Color(hex: 0x8ECBD0)
-    static let lavender = Color(hex: 0xB0A8CE)
+    static let navigation = Color(hex: 0xE4E3F5)
+    static let accent = Color(hex: 0xB8AAF2)
+    static let accentHover = Color(hex: 0xD2C5FF)
+    static let accentSolid = Color(hex: 0x71609E)
+    static let cyan = Color(hex: 0x70DBE8)
+    static let lavender = Color(hex: 0xB8AAF2)
 
     static let border = Color.white.opacity(0.07)
     static let borderStrong = Color.white.opacity(0.14)
@@ -33,7 +32,7 @@ enum PhrenTheme {
     static let red = danger
     static let violet = accentSolid
 
-    /// Chip color roles, mapped to the deep-void conventions.
+    /// Semantic chip colors shared across screens.
     static func chipColor(_ role: ChipRole) -> Color {
         switch role {
         case .project: return cyan

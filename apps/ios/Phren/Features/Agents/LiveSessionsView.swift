@@ -15,7 +15,7 @@ struct LiveSessionsView: View {
                         .accessibilityHidden(true)
                     Text("Your agents, within reach")
                         .font(.title2.weight(.semibold))
-                    Text("See what's running on your computers and continue a session in Moshi.")
+                    Text("See what's running on your computers and talk to your agents here.")
                         .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
                         .accessibilityIdentifier("agents-introduction")
                 }
@@ -361,7 +361,7 @@ private struct LiveSessionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Button(action: onDetails) {
+            AgentConversationLink(session: session) {
                 HStack(alignment: .top, spacing: 12) {
                     SessionStatusIcon(activity: session.tab.activity, fresh: fresh)
                     VStack(alignment: .leading, spacing: 6) {
@@ -379,18 +379,31 @@ private struct LiveSessionCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("live-detail:\(session.workspaceID):\(session.tab.id)")
+            .accessibilityIdentifier("live-chat:\(session.workspaceID):\(session.tab.id)")
+            .disabled(!fresh)
 
             HStack(spacing: 12) {
+                AgentConversationLink(session: session, honorsPreference: false) {
+                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                        .font(.callout.weight(.medium)).frame(minHeight: 44)
+                }
+                .buttonStyle(.plain).foregroundStyle(PhrenTheme.cyan)
+                .disabled(!fresh)
+                Spacer(minLength: 0)
                 if let destination = try? session.link().url() {
                     MoshiSessionOpenLink(destination: destination, workspaceName: session.workspaceName)
+                        .labelStyle(.iconOnly).frame(width: 44)
                         .id(destination)
                         .font(.subheadline.weight(.medium))
                         .tint(PhrenTheme.cyan)
                         .accessibilityIdentifier("live-open:\(session.workspaceID):\(session.tab.id)")
                         .disabled(!fresh)
                 }
-                Spacer(minLength: 0)
+                Button(action: onDetails) {
+                    Image(systemName: "info.circle").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Session details")
+                .accessibilityIdentifier("live-detail:\(session.workspaceID):\(session.tab.id)")
                 if let project = match?.project, model.sessionProjects.contains(project) {
                     NavigationLink { GraphView(focusProject: project.name, initialStoreId: project.storeID) } label: {
                         Image(systemName: "circle.hexagongrid").frame(width: 44, height: 44)
@@ -447,6 +460,12 @@ private struct LiveSessionDetailView: View {
                         }
                         .listRowBackground(session.tab.activity.color.opacity(0.10))
                         Section {
+                            AgentConversationLink(session: session, honorsPreference: false) {
+                                Label("Chat with agent", systemImage: "bubble.left.and.bubble.right")
+                                    .frame(minHeight: 44)
+                            }
+                            .accessibilityIdentifier("session-detail-chat")
+                            .disabled(!fresh)
                             if let destination = try? session.link().url() {
                                 MoshiSessionOpenLink(destination: destination, workspaceName: session.workspaceName)
                                     .id(destination)
