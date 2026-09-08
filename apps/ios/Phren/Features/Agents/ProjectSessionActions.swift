@@ -97,62 +97,32 @@ struct MoshiLaunchAlert: ViewModifier {
     }
 }
 
-/// Keep the URL as the row action's identity across refreshes. The first tap
-/// opens the computer check; only its explicit workspace action launches Moshi.
+/// Open the selected workspace in one tap, keeping the destination as the
+/// action's identity so refreshed rows cannot retain a previous launch target.
 struct MoshiSessionOpenLink: View {
     let destination: URL
     let workspaceName: String
-    let host: LiveHost
     @Environment(\.openURL) private var openURL
-    @Environment(\.isEnabled) private var isEnabled
     @State private var error: String?
-    @State private var checkingComputer = false
 
     var body: some View {
-        Button { checkingComputer = true } label: {
+        Button {
+            openURL(destination) { accepted in
+                if !accepted { error = "Moshi couldn't be opened on this iPhone. Install it and open this computer's session there first." }
+            }
+        } label: {
             Label("Open \(workspaceName) in Moshi", systemImage: "arrow.up.forward.app")
                 .frame(minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .id(destination)
         .buttonStyle(.borderless)
-        .modifier(MoshiComputerCheck(host: host, destination: destination, isPresented: $checkingComputer) { requestedURL in
-            guard requestedURL == destination else { return }
-            openURL(requestedURL) { accepted in
-                if !accepted { error = "Moshi couldn't be opened on this iPhone. Install it and open this computer's session there first." }
-            }
-        })
-        .onChange(of: destination) { _, _ in checkingComputer = false }
-        .onChange(of: isEnabled) { _, enabled in if !enabled { checkingComputer = false } }
         .contextMenu {
             Button("Copy Moshi link", systemImage: "link") {
                 UIPasteboard.general.url = destination
             }
         }
         .modifier(MoshiLaunchAlert(error: $error))
-    }
-}
-
-/// A workspace URL is not a computer-specific destination. Keep this check on
-/// every discovered-session handoff, even with only one host saved in Phren:
-/// Moshi may have other computers that this app cannot observe.
-struct MoshiComputerCheck: ViewModifier {
-    let host: LiveHost?
-    let destination: URL?
-    @Binding var isPresented: Bool
-    let open: (URL) -> Void
-
-    func body(content: Content) -> some View {
-        content.confirmationDialog("Select the computer in Moshi first", isPresented: $isPresented, titleVisibility: .visible) {
-            if let destination {
-                Button("Open workspace link") { open(destination) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if let host {
-                Text("This session is on \(host.name) (\(host.address)). Moshi's workspace links cannot select a computer. Open the session on that computer in Moshi first; matching workspace IDs on another computer can still send this link there.")
-            }
-        }
     }
 }
 

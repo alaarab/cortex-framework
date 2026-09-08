@@ -250,16 +250,16 @@ Schema 1 and 2 queues upgrade while retaining all existing operations.
 After connecting a computer in **Agents**, tap **Open [workspace] in Moshi** on
 a live tab. Phren uses the hook's workspace ID directly when that workspace
 has one tab, and includes the selected tab ID when there are several. No session
-link form or project mapping is needed. A computer check precedes the handoff;
-it shows the target computer and explains that Moshi cannot select it from the
-workspace link. Long-press the action to copy its link.
+link form or project mapping is needed. The action opens Moshi directly in one
+tap, including from session details. Long-press the action to copy its link.
 
 A project's **Project session → Open in Moshi**, and **Session → Open in Moshi**
 in graph details, discover sessions on the configured computers. One matching
 session is shown for selection after discovery succeeds. Several matches offer a
 chooser with the actual agent, status, workspace, directory, and computer.
-Discovery and refresh never open another app automatically. If no session matches,
-choosing one remembers its directory for this project on this iPhone.
+Discovery and refresh never open another app automatically. Tapping a chosen
+session opens it directly, without another confirmation. If no session matches,
+opening one remembers its directory for this project on this iPhone.
 
 Directory recognition uses the deepest path component matching a unique attached
 project name, including subfolders and worktrees. Explicit directory mappings
@@ -268,10 +268,10 @@ does not infer a project from a session label or agent conversation ID.
 
 Moshi must already have an open or minimized session for the computer. Its public
 links cannot create a connection or select a host ID. Even with only one computer
-saved in Phren, Moshi may have another computer active. Every discovered-session
-handoff shows the target computer before offering **Open workspace link**. Known
-workspace collisions also appear in the chooser. This check is a workaround:
-the link still cannot guarantee the computer Moshi will choose. Phren cannot read
+saved in Phren, Moshi may have another computer active. Moshi chooses the matching
+session card, including on another computer. Known workspace collisions appear
+inline in the chooser; they do not require another tap. The link cannot
+guarantee the computer Moshi will choose. Phren cannot read
 the Moshi iPhone app's active cards. Fully automatic computer selection needs a
 supported host-specific handoff from Moshi.
 

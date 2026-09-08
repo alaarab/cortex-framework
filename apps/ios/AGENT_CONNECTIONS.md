@@ -53,9 +53,9 @@ can copy that same link for a direct comparison in Safari.
 Project → Project session and graph node details → Session discover current
 sessions using directory recognition and explicit mappings. A single match stays
 visible for selection, as do multiple matches. Discovery and subsequent refreshes
-never launch Moshi automatically. Before opening, every discovered-session path
-shows the target computer and explains that the workspace URL cannot select it.
-Choosing an unmatched session remembers its directory for this project.
+never launch Moshi automatically. Tapping a session's open action hands off
+directly, without a computer confirmation popup. Opening an unmatched session
+remembers its directory for this project.
 
 Manual tmux/Herdr shortcuts remain available for unsupported discovery targets.
 The app encodes each value independently and preserves shortcuts on launch failure.
@@ -65,8 +65,8 @@ connection and have no public host selector. Matching workspaces across hosts
 can therefore be ambiguous. Known workspace collisions show a warning; the user
 must have the intended computer connected in Moshi. A unique result among Phren's
 configured computers does not establish uniqueness among Moshi's active cards.
-The computer check is a workaround, not automatic host switching: the final URL
-can still resolve to another computer. Full host selection requires a supported
+Moshi chooses the matching card, which can be on a different computer. The URL
+can also resolve to an unintended computer. Full host selection requires a supported
 Moshi API. Do not invent `hostId` parameters or use its internal terminal route.
 Phren cannot inspect Moshi's iPhone session cards or share its credentials.
 An agent conversation ID is never used as a Herdr server, workspace, tab, or pane.
@@ -90,8 +90,8 @@ An accepted iOS URL-open callback confirms only that the app handled the URL;
 it cannot confirm which terminal or Chat View Moshi displayed. A passing
 simulator launch test is therefore not physical-device handoff verification.
 Regression coverage checks that initial discovery and foreground refresh do not
-send a URL, cancelling the computer check sends nothing, and the final explicit
-workspace action retains the selected destination after row refreshes.
+send a URL, a single tap opens the selected destination without a confirmation,
+and that destination stays correct after row refreshes and returning to the app.
 
 ## Next integration steps
 

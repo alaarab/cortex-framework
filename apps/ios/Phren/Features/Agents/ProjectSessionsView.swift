@@ -72,8 +72,6 @@ struct ProjectSessionsView: View {
     @Environment(\.openURL) private var openURL
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
     @State private var discovery = ProjectSessionDiscovery()
-    @State private var checkingComputer = false
-    @State private var pending: Handoff?
     @State private var visible = false
     @State private var refreshID = UUID()
     @State private var error: String?
@@ -119,10 +117,6 @@ struct ProjectSessionsView: View {
                 if discovery.updated != nil && discovery.sessions.isEmpty && discovery.problems.isEmpty {
                     Text("No Herdr sessions are running on the connected computers.").foregroundStyle(.secondary)
                 }
-                Section {
-                    Text("Phren found the computer and workspace. Moshi's public links cannot select that computer; choose it in Moshi before opening a workspace link.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             }
             .navigationTitle("Project sessions")
             .navigationBarTitleDisplayMode(.inline)
@@ -135,10 +129,6 @@ struct ProjectSessionsView: View {
             }
             .phrenScreen()
             .modifier(MoshiLaunchAlert(error: $error))
-            .modifier(MoshiComputerCheck(host: pending?.session.host, destination: try? pending?.session.link().url(), isPresented: $checkingComputer) { requestedURL in
-                guard let pending else { return }
-                open(pending.session, assign: pending.assign, requestedURL: requestedURL)
-            })
             .onAppear { visible = true }
             .onDisappear { visible = false }
             .task(id: DiscoveryIdentity(data: data, active: visible && scenePhase == .active, refresh: refreshID)) {
@@ -155,17 +145,14 @@ struct ProjectSessionsView: View {
     private func sessionRow(_ session: DiscoveredMoshiSession, assign: Bool) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let fresh = discovery.updated.map { context.date.timeIntervalSince($0) < 25 } == true
-            Button {
-                pending = Handoff(session: session, assign: assign)
-                checkingComputer = true
-            } label: {
+            Button { open(session, assign: assign) } label: {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(session.tab.displayTitle).font(.headline).lineLimit(2)
                     Text("\(session.host.name) · \(session.workspaceName)").font(.caption).lineLimit(1)
                     Text("\(session.tab.agent ?? "Terminal") · \(session.tab.status)\(fresh ? "" : " · refresh needed")").font(.caption)
                     if let cwd = session.tab.cwd { Text(cwd).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                     if session.hasHostCollision(in: discovery.sessions) {
-                        Text("Switch to \(session.host.name) in Moshi first. Moshi's links cannot distinguish these computers.")
+                        Text("Also found on another computer. Check the computer shown in Moshi.")
                             .font(.caption).foregroundStyle(.orange)
                     }
                     Label(assign ? "Use for \(project) and open in Moshi" : "Open in Moshi", systemImage: "arrow.up.forward.app")
@@ -180,7 +167,7 @@ struct ProjectSessionsView: View {
         }
     }
 
-    private func open(_ session: DiscoveredMoshiSession, assign: Bool, requestedURL: URL) {
+    private func open(_ session: DiscoveredMoshiSession, assign: Bool) {
         do {
             guard scenePhase == .active, visible,
                   discovery.updated.map({ Date().timeIntervalSince($0) < 25 }) == true,
@@ -191,7 +178,7 @@ struct ProjectSessionsView: View {
                 return
             }
             let url = try current.link().url()
-            guard url == requestedURL else {
+            guard url == (try session.link().url()) else {
                 error = "This session's destination changed. Choose it again from the current list."
                 return
             }
@@ -204,11 +191,6 @@ struct ProjectSessionsView: View {
                 else { error = "Moshi couldn't be opened on this iPhone. Install it and open this computer's session there first." }
             }
         } catch { self.error = error.localizedDescription }
-    }
-
-    private struct Handoff {
-        let session: DiscoveredMoshiSession
-        let assign: Bool
     }
 
     private struct DiscoveryIdentity: Equatable {
