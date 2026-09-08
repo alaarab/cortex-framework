@@ -33,7 +33,7 @@ struct LiveHostEditor: View {
                 }
             }
             Section("Authorize this iPhone") {
-                Text("Create a device key, then add the copied line to ~/.ssh/authorized_keys for this user on the computer. SSH must allow forwarding to 127.0.0.1:24543, where moshi-hook listens.")
+                Text("Create a device key, then add the copied line to ~/.ssh/authorized_keys for this user on the computer. The line allows forwarding to this computer’s localhost for the agent helper and web previews. For an older connection, replace its existing phren-iphone line with this one.")
                     .font(.callout).foregroundStyle(.secondary)
                 if key.isEmpty {
                     Button("Create device key") { createKey() }

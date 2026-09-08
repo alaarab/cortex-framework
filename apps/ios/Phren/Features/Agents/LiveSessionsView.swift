@@ -47,6 +47,10 @@ struct LiveSessionsView: View {
         // large-title region when this list is hosted directly by a tab.
         .navigationBarTitleDisplayMode(.inline)
         .phrenScreen()
+        .toolbar {
+            NavigationLink { WebServersView() } label: { Label("Web servers", systemImage: "globe") }
+                .accessibilityIdentifier("all-web-servers")
+        }
         .sheet(isPresented: $adding) { NavigationStack { LiveHostEditor() } }
     }
 }
@@ -203,6 +207,8 @@ private struct LiveHostView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let host {
+                    NavigationLink { WebServersView(hostID: host.id) } label: { Label("Web servers", systemImage: "globe") }
+                        .accessibilityIdentifier("host-web-servers")
                     NavigationLink { HerdrWorkspacesView(hostID: host.id) } label: {
                         Label("Herdr workspaces & terminal", systemImage: "terminal")
                     }

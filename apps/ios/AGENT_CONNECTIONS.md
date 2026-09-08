@@ -10,10 +10,12 @@ computer helper is still required for this adapter.
 Agents → Add computer adds a computer with its own device SSH key and a
 verified host fingerprint. Tailscale provides network reachability; Phren does
 not borrow the Moshi app's credentials or tunnel. No Phren gateway is required.
-The SSH channel only opens the remote loopback address `127.0.0.1:24543` and
+Agent SSH channels open the remote loopback address `127.0.0.1:24543` and
 exposes workspace and pane discovery, live transcripts, earlier history,
 attachments, exact-session prompt delivery, and interrupting the current turn.
-Native terminal input is carried by the helper's Herdr PTY route; Phren exposes no arbitrary HTTP proxy or SSH exec channel.
+Native terminal input is carried by the helper's Herdr PTY route. Web previews
+use separate pinned SSH connections forwarding only to a discovered HTTP(S)
+server's loopback address and port. Phren exposes no SSH exec channel.
 
 The endpoint was observed on installed `moshi-hook 0.3.19`, which returns
 `kind`, `capabilities`, and workspace `groups` with tab `children`. Tab metadata
@@ -34,7 +36,7 @@ named directories or projects from being conflated. Missing
 stores or projects are shown as unavailable. Preferences reject corrupt or
 future schemas without replacing the original data.
 
-The exported SSH authorization line restricts forwarding to the gateway and
+The exported SSH authorization line restricts forwarding to IPv4/IPv6 localhost and
 disables shell commands. The hook itself offers more capabilities than status;
 this authorization is not a server-side read-only credential scope. The chat
 client uses `/v1/prompt` for deliberate replies and `/v1/keys` only for Escape
@@ -44,6 +46,32 @@ See [phone setup and tests](README.md#live-herdr-sessions-over-tailscale--ssh),
 [Moshi gateway roles](https://getmoshi.app/docs/install-desktop),
 [workspace discovery](https://getmoshi.app/docs/debug-multiplexer-chooser), and
 [Tailscale setup](https://getmoshi.app/docs/tailscale).
+
+## Web servers
+
+The globe opens a compact list grouped by saved SSH computer. A bounded `/events`
+WebSocket snapshot supplies `servers` (name, origin, port, process, cwd). Entries
+use computer ID + normalized loopback origin/port rather than temporary scan IDs.
+Only valid HTTP(S) loopback origins are accepted. Discovery failures retain a
+clearly previous list; a fresh scan must still contain the endpoint before opening.
+
+The browser creates a loopback-only listener on the phone and relays raw TCP
+through direct-tcpip children of one authenticated, pinned SSH connection. This
+preserves HTTP bodies, assets, redirects, WebSocket upgrades, and TLS. It tries
+the app's original port first, with an ephemeral fallback when occupied. Relay
+reads apply backpressure; at most 64 browser connections are accepted per preview.
+Closing/backgrounding tears down listeners and channels, without stopping the
+remote server. Reconnect keeps the current WKWebView and its temporary storage;
+dismissing discards them so a different computer cannot inherit localhost cookies.
+WKWebView keeps certificate validation and has no bridge to Phren's native APIs.
+
+Build 18's exported key line allows `127.0.0.1:*` and `[::1]:*`, retaining
+`restrict`, `port-forwarding`, and `command="/usr/bin/false"`. The migration script
+only changes old Phren-labelled restricted lines and backs up authorized_keys.
+Transport tests cover pinned hosts, blocked app ports, two computers sharing a
+port, redirects, 2 MB uploads, concurrent assets, live reload, and listener closure.
+`PHREN_TEST_WEB_SERVERS=1 swift test --filter WebPreviewTests` additionally checks
+the installed helper's discovery and a real local app through an isolated SSH relay.
 
 ## Native conversation
 

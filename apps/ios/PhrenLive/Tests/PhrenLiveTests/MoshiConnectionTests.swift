@@ -80,7 +80,7 @@ final class MoshiConnectionTests: XCTestCase {
     func testPublicAuthorizationLineContainsOnlyPublicKeyAndForwardRestriction() throws {
         let key = Curve25519.Signing.PrivateKey()
         let line = DeviceSSHKey.authorizedKey(privateKey: key)
-        XCTAssertTrue(line.hasPrefix("restrict,port-forwarding,permitopen=\"127.0.0.1:24543\",command=\"/usr/bin/false\" ssh-ed25519 "))
+        XCTAssertTrue(line.hasPrefix("restrict,port-forwarding,permitopen=\"127.0.0.1:*\",permitopen=\"[::1]:*\",command=\"/usr/bin/false\" ssh-ed25519 "))
         XCTAssertFalse(line.contains(key.rawRepresentation.base64EncodedString()))
         XCTAssertNotNil(MoshiConnection.fingerprint(publicKey: String(openSSHPublicKey: NIOSSHPrivateKey(ed25519Key: key).publicKey)))
     }

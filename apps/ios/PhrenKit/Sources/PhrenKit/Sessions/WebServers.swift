@@ -1,0 +1,43 @@
+import Foundation
+
+/// The gateway's /events snapshot. Scan IDs are temporary; use origin + port
+/// within a computer, and never interpret a reported URL as an SSH destination.
+public struct WebServer: Equatable, Sendable, Identifiable {
+    public let name: String
+    public let port: Int
+    public let scheme: String
+    public let loopbackHost: String
+    public let process: String?
+    public let pid: Int?
+    public let directory: String?
+    public var id: String { "\(scheme):\(loopbackHost):\(port)" }
+    public var displayName: String { name.isEmpty || name == "Error response" ? "Web server on port \(port)" : name }
+    public var detail: String { [process, "Port \(port)"].compactMap { $0 }.joined(separator: " · ") }
+
+    public static func readSnapshot(_ data: Data) throws -> [Self] {
+        guard data.count <= 1_048_576 else { throw PhrenKitError.validation("The server list is too large.") }
+        struct Snapshot: Decodable { var servers: [Entry] }
+        struct Entry: Decodable {
+            var name: String?
+            var port: Int
+            var origin: String
+            var process: String?
+            var pid: Int?
+            var cwd: String?
+        }
+        let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+        var seen = Set<String>()
+        return snapshot.servers.compactMap { entry in
+            guard (1...65535).contains(entry.port),
+                  let url = URLComponents(string: entry.origin),
+                  let scheme = url.scheme, ["http", "https"].contains(scheme),
+                  let host = url.host, ["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0", "::", "[::]"].contains(host),
+                  url.user == nil, url.password == nil,
+                  (url.port ?? (scheme == "https" ? 443 : 80)) == entry.port else { return nil }
+            let server = Self(name: String((entry.name ?? "").prefix(300)), port: entry.port, scheme: scheme,
+                              loopbackHost: host.contains(":") ? "::1" : "127.0.0.1",
+                              process: entry.process.map { String($0.prefix(100)) }, pid: entry.pid, directory: entry.cwd)
+            return seen.insert(server.id).inserted ? server : nil
+        }.sorted { $0.port < $1.port }
+    }
+}

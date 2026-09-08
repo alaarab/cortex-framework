@@ -253,8 +253,9 @@ final class AgentChatConnectionTests: XCTestCase {
 }
 
 /// SSH terminates in a test server with a fresh host/device key. Its only
-/// forwarding destination is the already-installed loopback Moshi helper.
-private final class ChatRelaySSH: @unchecked Sendable {
+/// forwarding destination defaults to the installed helper; web tests provide
+/// an explicit loopback port map for isolated application fixtures.
+final class ChatRelaySSH: @unchecked Sendable {
     let deviceKey: Curve25519.Signing.PrivateKey
     let hostKey: Curve25519.Signing.PrivateKey
     let listener: Channel
@@ -265,19 +266,19 @@ private final class ChatRelaySSH: @unchecked Sendable {
         try LiveHost(name: "Chat fixture", address: "127.0.0.1", port: listener.localAddress!.port!, username: "fixture",
                      fingerprint: MoshiConnection.fingerprint(publicKey: String(openSSHPublicKey: NIOSSHPrivateKey(ed25519Key: hostKey).publicKey)))
     }
-    static func start() async throws -> ChatRelaySSH {
+    static func start(forwardPorts: [Int: Int] = [24543: 24543]) async throws -> ChatRelaySSH {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let device = Curve25519.Signing.PrivateKey(), host = Curve25519.Signing.PrivateKey()
         let listener = try await ServerBootstrap(group: loop).childChannelInitializer { parent in
             parent.eventLoop.makeCompletedFuture {
                 try parent.pipeline.syncOperations.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [.init(ed25519Key: host)], userAuthDelegate: ChatRelayAuth(key: device))),
                 allocator: parent.allocator, inboundChildChannelInitializer: { child, type in
-                    guard case .directTCPIP(let target) = type, target.targetHost == "127.0.0.1", target.targetPort == 24543 else {
+                    guard case .directTCPIP(let target) = type, target.targetHost == "127.0.0.1", let port = forwardPorts[target.targetPort] else {
                         return child.eventLoop.makeFailedFuture(LiveConnectionError.disconnected)
                     }
                     return ClientBootstrap(group: child.eventLoop).channelInitializer { tcp in
                         tcp.pipeline.addHandler(ChatRelayTCP(peer: child))
-                    }.connect(host: "127.0.0.1", port: 24543).flatMap { tcp in
+                    }.connect(host: "127.0.0.1", port: port).flatMap { tcp in
                         child.closeFuture.whenComplete { _ in tcp.close(promise: nil) }
                         return child.pipeline.addHandler(ChatRelayChild(peer: tcp))
                     }

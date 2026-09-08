@@ -284,6 +284,27 @@ drafts survive process relaunch in protected local storage. They do not sync to 
 
 Open Herdr from the computer's terminal toolbar button. Session rows open chat;
 their info button opens the terminal, Moshi, project graph, and session metadata.
+The **globe** in Agents lists running web servers grouped by computer. The globe
+inside a computer filters to that host. Compact rows show app title, process,
+and port; tap to open a full-screen browser in Phren. Back, forward, reload,
+links, page zoom, uploads, and WebSocket live reload use a private SSH tunnel,
+including apps listening only on the computer's localhost. Closing the browser
+closes its tunnel. Backgrounding pauses the connection; returning reconnects
+with the current page and browser storage retained for that preview. The browser
+keeps each preview's cookies/storage separate from other computers.
+
+Discovery reads the helper's `/events` snapshot every 15 seconds while the list
+is visible. Opening rechecks the selected computer and port. Previous lists remain
+visible after connection failures. Existing connections created before build 18
+need their authorization line replaced from **Connection settings**, or run
+`python3 apps/ios/scripts/enable-web-previews.py` on the SSH computer as that user.
+This adds forwarding to IPv4/IPv6 localhost app ports while retaining the forced
+command and SSH restrictions. Apps do not need to bind to the LAN or use Funnel.
+The tunnel passes bytes without rewriting pages. Apps that hardcode a different
+localhost port, external OAuth callbacks, or untrusted HTTPS certificates may
+need their development server configuration adjusted. A phone port collision
+uses an available port; relative URLs and ordinary live reload still work.
+
 The terminal has one compact key bar with a directional pad and explicit Paste.
 Only its keyboard button raises the keyboard. Controls and web links activate on
 the first tap with the keyboard hidden or visible. Pinch to resize the text and

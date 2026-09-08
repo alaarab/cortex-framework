@@ -123,7 +123,7 @@ final class PinnedHost: NIOSSHClientServerAuthenticationDelegate {
     }
 }
 
-private final class DeviceAuthentication: NIOSSHClientUserAuthenticationDelegate {
+final class DeviceAuthentication: NIOSSHClientUserAuthenticationDelegate {
     let username: String
     let key: Curve25519.Signing.PrivateKey
     let exchange: Exchange
