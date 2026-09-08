@@ -2,10 +2,6 @@ import PhrenKit
 import PhrenLive
 import SwiftUI
 
-@MainActor private enum AgentChatDrafts {
-    static var values: [String: String] = [:]
-}
-
 /// Shared entry point; the preference changes where a normal agent tap opens.
 struct AgentConversationLink<LabelContent: View>: View {
     let session: DiscoveredMoshiSession
@@ -38,107 +34,6 @@ struct AgentChatSheet: View {
     }
 }
 
-@Observable @MainActor
-final class AgentChatModel {
-    var panes: [AgentChatPanes.Pane] = []
-    var target: AgentChatTarget?
-    var messages: [AgentChatMessage] = []
-    var error: String?
-    var deliveryError: String?
-    var loading = true
-    var connected = false
-    var sending = false
-    var needsAnswer = false
-    var hasMore = false
-    var receivedAt: Date?
-    var draft = ""
-    private var generation = UUID()
-
-    func choose(_ pane: AgentChatPanes.Pane, session: DiscoveredMoshiSession) {
-        do {
-            target = try pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id)
-            draft = target.flatMap { AgentChatDrafts.values[$0.id] } ?? ""
-            messages = []; connected = false; error = nil; deliveryError = nil
-        } catch { self.error = error.localizedDescription }
-    }
-
-    func run(_ session: DiscoveredMoshiSession) async {
-        let run = UUID(); generation = run
-        loading = true
-        defer { if generation == run { connected = false; loading = false } }
-        while !Task.isCancelled {
-            do {
-                let list = try await Self.fetchPanes(session)
-                try Task.checkCancellation()
-                guard generation == run else { return }
-                panes = list.panes
-                if target == nil {
-                    let supported = panes.compactMap { try? $0.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id) }
-                    if supported.count == 1 { target = supported[0]; draft = AgentChatDrafts.values[supported[0].id] ?? "" }
-                }
-                if let target {
-                    let pane = try list.validate(target)
-                    let transcript = try await Self.fetchTranscript(session, target: target)
-                    try Task.checkCancellation()
-                    guard generation == run, self.target == target else { continue }
-                    messages = transcript.messages
-                    hasMore = transcript.hasMore
-                    needsAnswer = pane.needsAnswer
-                    connected = true; receivedAt = Date(); error = nil
-                }
-                loading = false
-            } catch {
-                guard !Task.isCancelled, generation == run else { return }
-                connected = false; loading = false
-                self.error = error.localizedDescription
-            }
-            do { try await Task.sleep(for: .seconds(3)) } catch { return }
-        }
-    }
-
-    /// Only the explicit send action calls this. Never replay on reconnect.
-    func send(_ session: DiscoveredMoshiSession) async {
-        guard !sending, connected, !needsAnswer, let target, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let submitted = draft
-        sending = true; deliveryError = nil
-        defer { sending = false }
-        do {
-            #if DEBUG && targetEnvironment(simulator)
-            if AgentChatFixture.enabled { try await AgentChatFixture.send(target, text: submitted) }
-            else { try await MoshiConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: submitted) }
-            #else
-            try await MoshiConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: submitted)
-            #endif
-            if draft == submitted { draft = "" }
-        } catch {
-            deliveryError = "Delivery wasn't confirmed. Check the conversation before trying again. \(error.localizedDescription)"
-            return
-        }
-        if self.target == target {
-            do {
-                let transcript = try await Self.fetchTranscript(session, target: target)
-                messages = transcript.messages; hasMore = transcript.hasMore
-            } catch {
-                self.error = "Message sent. Reconnecting to read the reply…"
-            }
-        }
-    }
-
-    private static func fetchPanes(_ session: DiscoveredMoshiSession) async throws -> AgentChatPanes {
-        #if DEBUG && targetEnvironment(simulator)
-        if AgentChatFixture.enabled { return try AgentChatFixture.panes(session) }
-        #endif
-        return try await MoshiConnection.chatPanes(host: session.host, privateKey: DeviceSSHKey.load(session.host.id),
-                                                  workspaceID: session.workspaceID, tabID: session.tab.id)
-    }
-    private static func fetchTranscript(_ session: DiscoveredMoshiSession, target: AgentChatTarget) async throws -> AgentChatTranscript {
-        #if DEBUG && targetEnvironment(simulator)
-        if AgentChatFixture.enabled { return try AgentChatFixture.transcript(target) }
-        #endif
-        return try await MoshiConnection.chatTranscript(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target)
-    }
-}
-
 struct AgentChatView: View {
     let session: DiscoveredMoshiSession
     @Environment(AppModel.self) private var appModel
@@ -149,6 +44,10 @@ struct AgentChatView: View {
     @State private var visible = false
     @State private var refresh = UUID()
     @State private var showingContext = false
+    @State private var showingAttachments = false
+    @State private var showingDictation = false
+    @State private var previewImage: ChatAttachmentDraft?
+    @State private var historyTask: Task<Void, Never>?
     @State private var atBottom = true
     @State private var scrollHeight: CGFloat = 0
     @FocusState private var composing: Bool
@@ -202,8 +101,26 @@ struct AgentChatView: View {
                         }
                         if let error = model.error { connectionIssue(error) }
                         if currentHost != session.host { connectionIssue("This computer's connection changed. Reopen chat from the current session list.") }
-                        if model.hasMore { Text("Recent conversation · earlier history stays on your computer").font(.caption).foregroundStyle(PhrenTheme.textDim) }
-                        ForEach(model.messages) { message in ChatMessageRow(message: message) }
+                        if model.hasMore {
+                            Button {
+                                let anchor = model.messages.first?.id
+                                historyTask = Task {
+                                    await model.loadOlder(session)
+                                    if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                                }
+                            } label: {
+                                if model.loadingHistory { ProgressView() }
+                                else { Label("Load earlier messages", systemImage: "clock.arrow.circlepath") }
+                            }.disabled(model.loadingHistory || !active).accessibilityIdentifier("chat-history")
+                        }
+                        if model.history.reachedLimit {
+                            Text("Showing the most recent loaded history to keep this chat responsive.").font(.caption).foregroundStyle(PhrenTheme.textDim)
+                        }
+                        ForEach(model.messages) { message in
+                            ChatMessageRow(message: message, images: model.sentImages.filter { item in
+                                message.role == .user && item.path.map { message.text.contains($0) } == true
+                            }, preview: { previewImage = $0 }).id(message.id)
+                        }
                         if model.connected && model.messages.isEmpty { Text("Ready for your message.").foregroundStyle(PhrenTheme.textMuted).padding(.top, 40) }
                         GeometryReader { geometry in
                             Color.clear.preference(key: ChatBottomPosition.self, value: geometry.frame(in: .named("chat-scroll")).maxY)
@@ -248,10 +165,14 @@ struct AgentChatView: View {
                         NavigationLink("Explore graph") { GraphView(focusProject: project.name, initialStoreId: project.storeID) }
                     }
                     Button("Refresh conversation") { refresh = UUID() }
+                    Button("Dictate message", systemImage: "mic") { showingDictation = true }
+                        .disabled(model.target == nil || model.sending)
+                    if project != nil {
+                        Button("Add project context", systemImage: "brain") { showingContext = true }
+                    }
                     if model.panes.filter({ (try? $0.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id)) != nil }).count > 1 {
                         Button("Choose another agent") {
-                            model.target = nil; model.messages = []; model.connected = false
-                            model.draft = ""; model.deliveryError = nil; model.needsAnswer = false
+                            model.chooseAnother()
                             refresh = UUID()
                         }.disabled(model.sending)
                     }
@@ -260,11 +181,33 @@ struct AgentChatView: View {
             }
         }
         .onAppear { visible = true }
-        .onDisappear { visible = false; sendTask?.cancel() }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { sendTask?.cancel() } }
-        .onChange(of: currentHost) { _, _ in sendTask?.cancel() }
-        .onChange(of: model.draft) { _, value in
-            if let target = model.target { AgentChatDrafts.values[target.id] = value }
+        .onDisappear { visible = false; sendTask?.cancel(); historyTask?.cancel() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { sendTask?.cancel(); historyTask?.cancel() } }
+        .onChange(of: currentHost) { _, _ in sendTask?.cancel(); historyTask?.cancel() }
+        .sheet(isPresented: $showingAttachments) {
+            if let openingTarget = model.target {
+                ChatAttachmentPicker(canAdd: model.attachments.count < 4, add: { item in
+                    if model.target == openingTarget { model.add(item) }
+                }, context: project == nil ? nil : {
+                    Task { try? await Task.sleep(for: .milliseconds(350)); showingContext = true }
+                })
+            }
+        }
+        .sheet(isPresented: $showingDictation) {
+            if let openingTarget = model.target {
+                ChatDictationView { text in
+                    if model.target == openingTarget { model.draft += (model.draft.isEmpty ? "" : "\n\n") + text }
+                }
+            }
+        }
+        .sheet(item: $previewImage) { item in
+            NavigationStack {
+                if let image = UIImage(data: item.attachment.data) {
+                    Image(uiImage: image).resizable().scaledToFit().padding()
+                        .navigationTitle(item.attachment.name).navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { previewImage = nil } } }
+                }
+            }
         }
         .sheet(isPresented: $showingContext) {
             if let project {
@@ -286,22 +229,54 @@ struct AgentChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !model.attachments.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 10) {
+                        ForEach(model.attachments) { item in
+                            VStack(spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Button { if item.attachment.isImage { previewImage = item } } label: {
+                                        if item.attachment.isImage, let image = UIImage(data: item.attachment.data) {
+                                            Image(uiImage: image).resizable().scaledToFill().frame(width: 56, height: 56).clipped().clipShape(RoundedRectangle(cornerRadius: 10))
+                                        } else { Image(systemName: "doc").frame(width: 56, height: 56) }
+                                    }.accessibilityLabel("Preview \(item.attachment.name)")
+                                    Button {
+                                        model.attachments.removeAll { $0.id == item.id }
+                                    } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 20)).frame(width: 44, height: 44) }
+                                        .disabled(model.sending).accessibilityLabel("Remove \(item.attachment.name)")
+                                }
+                                Text(item.attachment.name).font(.caption).lineLimit(1).frame(maxWidth: 120)
+                            }.padding(8).background(PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                    }
+                }.accessibilityIdentifier("chat-attachments")
+            }
+            if let status = model.deliveryStatus { Text(status).font(.caption).foregroundStyle(PhrenTheme.cyan) }
+            if selectedPane?.agentStatus == "working", !model.needsAnswer {
+                HStack {
+                    Label("Agent is working", systemImage: "waveform").font(.caption).foregroundStyle(PhrenTheme.cyan)
+                    Spacer()
+                    Button("Stop", systemImage: "stop.circle") { sendTask = Task { await model.stop(session) } }
+                        .disabled(!active || !model.connected || model.sending || model.stopping).accessibilityIdentifier("chat-stop")
+                }
+            }
             if model.needsAnswer {
                 Text("The agent needs an approval or answer in the terminal.").font(.caption).foregroundStyle(PhrenTheme.warning)
             }
             if let error = model.deliveryError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-delivery-error") }
             HStack(alignment: .bottom, spacing: 10) {
-                if project != nil {
-                    Button { showingContext = true } label: {
+                    Button { showingAttachments = true } label: {
                         Image(systemName: "plus").font(.system(size: 20)).frame(width: 32, height: 44)
-                    }.accessibilityLabel("Add project context").disabled(model.target == nil || model.sending)
-                }
+                    }.accessibilityLabel("Add attachment").disabled(model.target == nil || model.sending)
                 TextField("Message this agent…", text: $model.draft, axis: .vertical)
                     .lineLimit(1...6).focused($composing).font(.body)
                     .padding(.horizontal, 14).padding(.vertical, 12)
                     .background(PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 20))
                     .accessibilityIdentifier("chat-composer")
                     .disabled(model.target == nil)
+                Button { showingDictation = true } label: {
+                    Image(systemName: "mic").font(.system(size: 20)).frame(width: 32, height: 44)
+                }.accessibilityLabel("Dictate message").disabled(model.target == nil || model.sending)
                 Button {
                     composing = false
                     sendTask = Task { await model.send(session) }
@@ -313,6 +288,7 @@ struct AgentChatView: View {
                 .background(canSend ? PhrenTheme.cyan : PhrenTheme.surfaceRaised, in: Circle())
                 .disabled(!canSend)
                 .accessibilityLabel("Send message").accessibilityIdentifier("chat-send")
+                .keyboardShortcut(.return, modifiers: .command)
             }
         }
         .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8)
@@ -320,7 +296,8 @@ struct AgentChatView: View {
     }
     private struct RunIdentity: Equatable { let active: Bool; let refresh: UUID }
     private var canSend: Bool {
-        active && model.connected && !model.sending && !model.needsAnswer && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        active && model.connected && !model.sending && !model.stopping && !model.needsAnswer
+            && (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.attachments.isEmpty)
     }
 }
 
@@ -331,6 +308,17 @@ private struct ChatBottomPosition: PreferenceKey {
 
 private struct ChatMessageRow: View {
     let message: AgentChatMessage
+    let images: [ChatAttachmentDraft]
+    let preview: (ChatAttachmentDraft) -> Void
+    private var displayText: String {
+        let marker = "\n\nAttached files on this computer:\n"
+        guard !images.isEmpty, let section = message.text.range(of: marker, options: .backwards) else { return message.text }
+        let paths = message.text[section.upperBound...].components(separatedBy: "\n")
+        let previewPaths = Set(images.compactMap(\.path))
+        // Hide only our complete image attachment suffix when previews replace it.
+        guard paths.allSatisfy({ previewPaths.contains($0) }) else { return message.text }
+        return String(message.text[..<section.lowerBound])
+    }
     var body: some View {
         if message.role == .tool {
             DisclosureGroup {
@@ -347,14 +335,24 @@ private struct ChatMessageRow: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(message.role == .user ? "You" : "Agent").font(.caption.weight(.medium))
                         .foregroundStyle(message.role == .user ? PhrenTheme.cyan : PhrenTheme.lavender)
-                    Text(.init(message.text)).font(.body).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(images) { item in
+                        if let image = UIImage(data: item.attachment.data) {
+                            Button { preview(item) } label: {
+                                Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 220).clipShape(RoundedRectangle(cornerRadius: 12))
+                            }.accessibilityLabel("View attached \(item.attachment.name)")
+                        }
+                    }
+                    if !displayText.isEmpty { ChatRichText(text: displayText) }
                 }
                 .padding(14)
                 .background(message.role == .user ? PhrenTheme.cyan.opacity(0.10) : PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 18))
                 if message.role != .user { Spacer(minLength: 12) }
             }
             .accessibilityIdentifier("chat-message:\(message.id)")
+            .contextMenu {
+                Button("Copy message", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+                ShareLink(item: message.text)
+            }
         }
     }
 }

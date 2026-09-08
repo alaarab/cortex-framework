@@ -1,0 +1,153 @@
+import ImageIO
+import PhrenKit
+import PhotosUI
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// Downsample before rendering; newly encoded images omit source metadata.
+enum ChatAttachmentPreparation {
+    static func preview(_ attachment: AgentAttachment) -> AgentAttachment? {
+        guard let source = CGImageSourceCreateWithData(attachment.data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 768,
+              ] as CFDictionary),
+              let data = UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.8) else { return nil }
+        return try? AgentAttachment(id: attachment.id, name: attachment.name, data: data, isImage: true)
+    }
+
+    static func image(_ data: Data, name: String = "Image") throws -> AgentAttachment {
+        guard data.count <= 32 * 1_024 * 1_024,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2_048,
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary) else { throw PhrenKitError.validation("This image couldn't be opened. Choose another image.") }
+        let image = UIImage(cgImage: thumbnail)
+        let png = image.pngData()
+        let keepPNG = (png?.count ?? Int.max) <= 4 * 1_024 * 1_024
+        guard let encoded = keepPNG ? png : image.jpegData(compressionQuality: 0.85) else {
+            throw PhrenKitError.validation("This image couldn't be prepared for the agent.")
+        }
+        return try AgentAttachment(name: (name as NSString).deletingPathExtension + (keepPNG ? ".png" : ".jpg"), data: encoded, isImage: true)
+    }
+    static func file(_ url: URL) throws -> AgentAttachment {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .contentTypeKey])
+        guard values.isRegularFile == true, (values.fileSize ?? Int.max) <= AgentAttachment.maximumBytes else {
+            throw PhrenKitError.validation("Choose a file smaller than 8 MB.")
+        }
+        let data = try Data(contentsOf: url)
+        if values.contentType?.conforms(to: .image) == true { return try image(data, name: url.lastPathComponent) }
+        return try AgentAttachment(name: url.lastPathComponent, data: data)
+    }
+}
+
+struct ChatAttachmentPicker: View {
+    let canAdd: Bool
+    let add: (AgentAttachment) -> Void
+    let context: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
+    @State private var photos: [PhotosPickerItem] = []
+    @State private var files = false
+    @State private var camera = false
+    @State private var busy = false
+    @State private var error: String?
+    var body: some View {
+        NavigationStack {
+            PhrenList {
+                Section {
+                    PhotosPicker(selection: $photos, maxSelectionCount: 4, matching: .images) {
+                        Label("Photos", systemImage: "photo.on.rectangle")
+                    }.disabled(!canAdd || busy)
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button("Camera", systemImage: "camera") { camera = true }.disabled(!canAdd || busy)
+                    }
+                    Button("Files", systemImage: "doc") { files = true }.disabled(!canAdd || busy)
+                    PasteButton(supportedContentTypes: [.image]) { providers in
+                        guard let provider = providers.first,
+                              let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else { return }
+                        busy = true
+                        provider.loadDataRepresentation(forTypeIdentifier: type) { data, failure in
+                            Task { @MainActor in
+                                defer { busy = false }
+                                do {
+                                    if let failure { throw failure }
+                                    guard let data else { throw PhrenKitError.validation("No image was found on the clipboard.") }
+                                    add(try ChatAttachmentPreparation.image(data, name: "Clipboard")); dismiss()
+                                } catch { self.error = error.localizedDescription }
+                            }
+                        }
+                    }.disabled(!canAdd || busy).accessibilityLabel("Paste image")
+                    #if DEBUG && targetEnvironment(simulator)
+                    if AgentChatFixture.enabled {
+                        Button("Add test image") { add(AgentChatFixture.image); dismiss() }
+                    }
+                    #endif
+                } footer: {
+                    Text("Up to four files, 8 MB each. Photos are resized and location metadata removed. Attachments upload to this computer when you send.")
+                }
+                if let context {
+                    Section {
+                        Button("Project memory and skills", systemImage: "brain") { dismiss(); context() }
+                    }
+                }
+                if busy { ProgressView("Preparing attachment…") }
+                if let error { Text(error).font(.footnote).foregroundStyle(PhrenTheme.warning) }
+            }
+            .navigationTitle("Add attachment").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .fileImporter(isPresented: $files, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                do {
+                    let urls = try result.get()
+                    for url in urls.prefix(4) { add(try ChatAttachmentPreparation.file(url)) }
+                    dismiss()
+                } catch { self.error = error.localizedDescription }
+            }
+            .fullScreenCover(isPresented: $camera) {
+                ChatCamera { image in
+                    camera = false
+                    guard let image else { return }
+                    do {
+                        guard let data = image.jpegData(compressionQuality: 0.9) else { return }
+                        add(try ChatAttachmentPreparation.image(data, name: "Camera")); dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }.ignoresSafeArea()
+            }
+            .onChange(of: photos) { _, items in
+                busy = true
+                Task {
+                    defer { busy = false }
+                    do {
+                        for item in items {
+                            if let data = try await item.loadTransferable(type: Data.self) { add(try ChatAttachmentPreparation.image(data)) }
+                        }
+                        if !items.isEmpty { dismiss() }
+                    } catch { self.error = error.localizedDescription }
+                }
+            }
+        }
+    }
+}
+
+private struct ChatCamera: UIViewControllerRepresentable {
+    let finish: (UIImage?) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(finish: finish) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController(); picker.sourceType = .camera; picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let finish: (UIImage?) -> Void
+        init(finish: @escaping (UIImage?) -> Void) { self.finish = finish }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { finish(nil) }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            finish(info[.originalImage] as? UIImage)
+        }
+    }
+}

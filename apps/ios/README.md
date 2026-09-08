@@ -258,18 +258,31 @@ in Moshi cannot redirect a native reply. **Settings → Agent conversations → 
 agents in** makes Moshi an optional default; **Open terminal in Moshi** remains
 available from chat options.
 
-The plus button adds project summaries, findings, or skills to a draft for review.
-Chat options also open project memory, skills, and the graph. Failed or uncertain
-delivery preserves the draft and never retries automatically. Drafts survive
-reopening during the current app process; chats and drafts are not synced to Git.
+The plus button attaches photos, camera images, files, or a pasted image. Preview
+and remove attachments before sending. Up to four files (8 MB each) upload over
+SSH to the selected computer; the agent receives their local paths. Photos are
+resized and location metadata removed. Failed uploads preserve the image and
+text without sending a partial message.
 
-This first adapter requires the computer's existing `moshi-hook` (verified with
-0.3.19) and default Herdr server, but does not require the Moshi iPhone app. Recent
-transcript snapshots refresh every three seconds while visible; full-history
-loading and token streaming are not yet available. Tools expand inline. Text
-replies are supported; attachments, in-app approvals, and starting/stopping agents
-remain outside this version. A blocked agent requires an answer in the terminal.
-See [connection contracts and validation](AGENT_CONNECTIONS.md#native-conversation).
+The microphone opens editable dictation. Chat options or **+ → Project memory
+and skills** add project summaries, findings, or skills to a draft for review.
+Chat options also open project memory, skills, and the graph. Failed or uncertain
+delivery preserves the draft and never retries automatically. Text and attachment
+drafts survive reopening during the current app process; they do not survive
+app termination or sync to Git.
+
+The adapter requires the computer's existing `moshi-hook` (verified with 0.3.19)
+and default Herdr server, but does not require the Moshi iPhone app. Chat receives
+live transcript updates while visible, loads earlier messages on demand, and
+reconnects after foregrounding. Tools expand inline; Markdown headings and code
+cards are native, code can be copied, and messages can be copied or shared.
+**Stop** interrupts a working turn. In-app approvals and starting agents remain
+outside this version; a blocked agent requires an answer in the terminal.
+
+History and image previews are bounded in memory. Earlier transcript images are
+not yet downloaded, and live transcript records are not token-by-token output.
+See [connection contracts and validation](AGENT_CONNECTIONS.md#native-conversation)
+and the [feature comparison and next work](CHAT_FEATURES.md).
 
 ### Automatic Moshi session handoff
 

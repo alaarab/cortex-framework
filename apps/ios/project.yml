@@ -114,9 +114,10 @@ targets:
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Phren records audio only while you dictate a note."
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Phren transcribes your dictation into a note on this device when possible."
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Phren connects to a computer you add to read live session status over SSH."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Phren records audio only while you dictate a note, task, or agent message."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Phren transcribes dictation into your draft, on this device when possible."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Phren uses the camera when you attach a photo to an agent message."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Phren connects to computers you add over SSH for agent status, chat, and attachments."
         # SSH now includes bundled cryptographic implementation (Swift Crypto).
         # Complete App Store Connect's encryption questionnaire for distribution;
         # the previous OS-only HTTPS exemption no longer describes this binary.

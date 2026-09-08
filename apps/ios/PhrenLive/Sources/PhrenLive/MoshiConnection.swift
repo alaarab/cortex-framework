@@ -38,13 +38,16 @@ public enum MoshiConnection {
         return try MoshiWorkspaces.read(data)
     }
 
-    static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey, request: GatewayRequest = .workspaces) async throws -> Data {
+    static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey, request: GatewayRequest = .workspaces,
+                          receive: (@Sendable (Data) throws -> Void)? = nil) async throws -> Data {
         try host.validate()
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let result = loop.makePromise(of: Data.self)
         let exchange = Exchange(result: result)
+        exchange.onFrame = receive
         // All Exchange access is confined to this event loop, including cancel.
-        let deadline = loop.scheduleTask(in: .seconds(20)) { exchange.finish(.failure(LiveConnectionError.timeout)) }
+        let deadline = loop.scheduleTask(in: .seconds(request.body == nil ? 20 : 60)) { exchange.finish(.failure(LiveConnectionError.timeout)) }
+        if receive != nil { exchange.onFirstFrame = { deadline.cancel() } }
         result.futureResult.whenComplete { _ in
             deadline.cancel()
             exchange.parent?.close(promise: nil)
@@ -84,8 +87,17 @@ public enum MoshiConnection {
 final class Exchange: @unchecked Sendable {
     let result: EventLoopPromise<Data>
     var parent: Channel?
+    var onFrame: (@Sendable (Data) throws -> Void)?
+    var onFirstFrame: (() -> Void)?
     private(set) var finished = false
     init(result: EventLoopPromise<Data>) { self.result = result }
+    func receive(_ data: Data) {
+        guard !finished else { return }
+        if let onFrame {
+            do { try onFrame(data); onFirstFrame?(); onFirstFrame = nil }
+            catch { finish(.failure(error)) }
+        } else { finish(.success(data)) }
+    }
     func finish(_ value: Result<Data, Error>) {
         guard !finished else { return }
         finished = true

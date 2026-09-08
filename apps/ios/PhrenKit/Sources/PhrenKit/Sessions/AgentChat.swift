@@ -82,14 +82,17 @@ public struct AgentChatMessage: Equatable, Sendable, Identifiable {
 /// Normalize only visible conversation content. Encrypted reasoning, system
 /// prompts, hook metadata, and terminal escape sequences are never rendered.
 public struct AgentChatTranscript: Equatable, Sendable {
+    public enum Kind: String, Sendable { case backlog, append, older }
+    public let kind: Kind
     public let messages: [AgentChatMessage]
     public let hasMore: Bool
     public let totalLines: Int
+    public let startLine: Int?
 
     public static func read(_ data: Data, source: String) throws -> Self {
         guard ["codex", "claude"].contains(source), data.count <= 8_388_608,
               let frame = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              frame["type"] as? String == "backlog", frame["source"] as? String == source,
+              let kind = Kind(rawValue: frame["type"] as? String ?? ""), frame["source"] as? String == source,
               let entries = frame["entries"] as? [[String: Any]], entries.count <= 2_000 else {
             throw PhrenKitError.validation("The computer returned an unsupported chat transcript.")
         }
@@ -105,8 +108,9 @@ public struct AgentChatTranscript: Equatable, Sendable {
                                       text: String(part.text.prefix(64_000))))
             }
         }
-        return Self(messages: messages.sorted { $0.line < $1.line }, hasMore: frame["hasMore"] as? Bool ?? false,
-                    totalLines: frame["totalLines"] as? Int ?? 0)
+        return Self(kind: kind, messages: messages.sorted { $0.line < $1.line }, hasMore: frame["hasMore"] as? Bool ?? false,
+                    totalLines: frame["totalLines"] as? Int ?? 0,
+                    startLine: frame["startLine"] as? Int ?? entries.compactMap { $0["line"] as? Int }.min())
     }
 
     private struct Part { let role: AgentChatMessage.Role; var title: String? = nil; let text: String }

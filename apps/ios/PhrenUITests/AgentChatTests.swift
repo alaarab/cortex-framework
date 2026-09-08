@@ -1,6 +1,101 @@
 import XCTest
 
 final class AgentChatTests: XCTestCase {
+    /// Seed this simulator with `xcrun simctl addmedia <device> <test-image>`.
+    @MainActor
+    func testSystemPhotoPickerPreparesAnAttachment() throws {
+        let app = launch()
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
+        app.buttons["Add attachment"].tap()
+        app.buttons["Photos"].tap()
+        let picker = app.scrollViews["photosView_content_scroll_view"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        let introduction = picker.buttons["Close"].firstMatch
+        if introduction.exists { introduction.tap() }
+        let photo = picker.images.firstMatch
+        guard photo.waitForExistence(timeout: 8) else {
+            throw XCTSkip("Seed the UI test simulator with a photo to exercise the system picker")
+        }
+        // Photos' remote grid exposes its image frame but not AX hit testing.
+        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let done = app.navigationBars["Photos"].buttons["Done"]
+        if done.waitForExistence(timeout: 3) { done.tap() }
+        else { app.buttons["Add"].firstMatch.tap() }
+        let preview = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Preview Image.")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
+        capture(app, "System photo picker attachment")
+    }
+
+    @MainActor
+    func testImageAttachmentCanBeRemovedPreviewedAndSent() {
+        let app = launch()
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
+        attachImage(app)
+        XCTAssertTrue(app.buttons["Preview Screenshot.png"].waitForExistence(timeout: 5))
+        app.buttons["Preview Screenshot.png"].tap()
+        XCTAssertTrue(app.navigationBars["Screenshot.png"].waitForExistence(timeout: 5))
+        app.navigationBars["Screenshot.png"].buttons["Done"].tap()
+        app.buttons["Remove Screenshot.png"].tap()
+        XCTAssertFalse(app.buttons["Preview Screenshot.png"].exists)
+        attachImage(app)
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Review this screenshot")
+        capture(app, "Image and prompt ready to send")
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.buttons["View attached Screenshot.png"].waitForExistence(timeout: 8))
+        capture(app, "Sent image in conversation")
+        if app.buttons["Latest messages"].isHittable { app.buttons["Latest messages"].tap() }
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Received in codex", "/tmp/phren-fixture/")).firstMatch.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Remove Screenshot.png"].exists)
+    }
+
+    @MainActor
+    func testFailedUploadRetainsImageAndTextWithoutSending() {
+        let app = launch(extra: ["--chat-upload-fails"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
+        attachImage(app)
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Keep my screenshot")
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.staticTexts["chat-delivery-error"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["chat-delivery-error"].label.contains("message hasn't been sent"))
+        XCTAssertEqual(composer.value as? String, "Keep my screenshot")
+        XCTAssertTrue(app.buttons["Remove Screenshot.png"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Received in codex")).firstMatch.exists)
+    }
+
+    @MainActor
+    func testEarlierHistorySurvivesLiveRefresh() {
+        let app = launch(extra: ["--chat-history"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.buttons["chat-history"].waitForExistence(timeout: 5))
+        app.buttons["chat-history"].tap()
+        XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["chat-history"].exists)
+    }
+
+    @MainActor
+    func testStopAndCodeCardsWorkInsideChat() {
+        let app = launch(extra: ["--chat-working", "--chat-markdown"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.buttons["chat-stop"].waitForExistence(timeout: 5))
+        app.buttons["Copy code"].tap()
+        app.buttons["chat-stop"].tap()
+        XCTAssertTrue(app.staticTexts["Turn stopped in the selected pane."].waitForExistence(timeout: 8))
+        capture(app, "Native code card and stopped turn")
+    }
+
+    @MainActor private func attachImage(_ app: XCUIApplication) {
+        app.buttons["Add attachment"].tap()
+        XCTAssertTrue(app.buttons["Add test image"].waitForExistence(timeout: 5))
+        app.buttons["Add test image"].tap()
+    }
+
     @MainActor
     func testNativeChatReadsAndRepliesToTheSelectedConversation() {
         let app = launch()
@@ -52,6 +147,7 @@ final class AgentChatTests: XCTestCase {
         let app = launch()
         app.buttons["live-chat:w7:w7:t9"].tap()
         XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
+        app.buttons["Chat options"].tap()
         app.buttons["Add project context"].tap()
         XCTAssertTrue(app.navigationBars["Project context"].waitForExistence(timeout: 5))
         app.buttons["[decision] Keep phone sessions connected to project memory"].tap()

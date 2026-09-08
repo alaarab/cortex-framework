@@ -10,6 +10,50 @@ import XCTest
 @testable import PhrenLive
 
 final class AgentChatConnectionTests: XCTestCase {
+    func testInstalledHelperStreamsHistoryUploadsAndStopsFixture() async throws {
+        guard let path = ProcessInfo.processInfo.environment["PHREN_CHAT_ITERATION_FIXTURE"] else { throw XCTSkip("Requires the inert upload/stream/stop fixture") }
+        let metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: String])
+        let server = try await ChatRelaySSH.start()
+        defer { Task { try await server.close() } }
+        let host = try server.host(), key = server.deviceKey.rawRepresentation
+        let target = try AgentChatTarget(hostID: host.id, workspaceID: XCTUnwrap(metadata["workspace"]), tabID: XCTUnwrap(metadata["tab"]), paneID: XCTUnwrap(metadata["pane"]), source: "codex", sessionID: XCTUnwrap(metadata["session"]))
+        let initial = expectation(description: "Initial backlog"), reply = expectation(description: "Live reply"), stopped = expectation(description: "Stop reached exact fixture")
+        let marker = "Image prompt " + UUID().uuidString
+        let reader = Task {
+            var gotInitial = false, gotReply = false, gotStop = false
+            do {
+                for try await frame in MoshiConnection.chatUpdates(host: host, privateKey: key, target: target) {
+                    if frame.kind == .backlog && !gotInitial { gotInitial = true; initial.fulfill() }
+                    if frame.kind == .append && frame.messages.contains(where: { $0.text.contains("Echo: " + marker) }) && !gotReply { gotReply = true; reply.fulfill() }
+                    if frame.kind == .append && frame.messages.contains(where: { $0.text == "Fixture stop received" }) && !gotStop { gotStop = true; stopped.fulfill() }
+                }
+            } catch { if !Task.isCancelled { XCTFail("Stream failed: \(error)") } }
+        }
+        defer { reader.cancel() }
+        await fulfillment(of: [initial], timeout: 8)
+        let image = try AgentAttachment(name: "Screenshot.png", data: XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ioAAAAASUVORK5CYII=")), isImage: true)
+        let uploaded = try await MoshiConnection.uploadChatAttachment(host: host, privateKey: key, target: target, attachment: image)
+        let file = URL(fileURLWithPath: uploaded)
+        XCTAssertEqual(file.lastPathComponent, image.uploadName)
+        XCTAssertEqual(try Data(contentsOf: file), image.data)
+        defer {
+            if file.lastPathComponent == image.uploadName, file.deletingLastPathComponent().lastPathComponent.hasPrefix("moshi-upload-") {
+                try? FileManager.default.removeItem(at: file)
+                try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+            }
+        }
+        try await MoshiConnection.sendChat(host: host, privateKey: key, target: target, text: marker + " " + uploaded)
+        await fulfillment(of: [reply], timeout: 8)
+        let history = try await MoshiConnection.chatHistory(host: host, privateKey: key, target: target, beforeLine: 8)
+        XCTAssertEqual(history.kind, .older)
+        XCTAssertTrue(history.messages.contains { $0.text == "Fixture message 0" })
+        XCTAssertTrue(history.messages.allSatisfy { $0.line < 8 })
+        try await MoshiConnection.stopChatTurn(host: host, privateKey: key, target: target)
+        await fulfillment(of: [stopped], timeout: 8)
+        reader.cancel(); await reader.value
+        try await server.close()
+    }
+
     func testDifferentComputerRejectsBeforeConnectingOrUsingItsKey() async throws {
         let host = try LiveHost(name: "Other computer", address: "fixture.invalid", username: "fixture")
         let target = try AgentChatTarget(hostID: UUID(), workspaceID: "w7", tabID: "w7:t1", paneID: "w7:p1", source: "codex", sessionID: "fixture")
@@ -20,6 +64,19 @@ final class AgentChatConnectionTests: XCTestCase {
         do {
             _ = try await MoshiConnection.chatTranscript(host: host, privateKey: Data(), target: target)
             XCTFail("A different computer must reject the transcript")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("another computer")) }
+        do {
+            let image = try AgentAttachment(name: "image.png", data: Data([1]), isImage: true)
+            _ = try await MoshiConnection.uploadChatAttachment(host: host, privateKey: Data(), target: target, attachment: image)
+            XCTFail("A different computer must reject an upload")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("another computer")) }
+        do {
+            try await MoshiConnection.stopChatTurn(host: host, privateKey: Data(), target: target)
+            XCTFail("A different computer must reject stopping")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("another computer")) }
+        do {
+            for try await _ in MoshiConnection.chatUpdates(host: host, privateKey: Data(), target: target) { XCTFail("Must not subscribe") }
+            XCTFail("A different computer must reject streaming")
         } catch { XCTAssertTrue(error.localizedDescription.contains("another computer")) }
     }
 

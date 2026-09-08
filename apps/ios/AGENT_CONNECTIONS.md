@@ -11,8 +11,9 @@ Agents → Add computer adds a computer with its own device SSH key and a
 verified host fingerprint. Tailscale provides network reachability; Phren does
 not borrow the Moshi app's credentials or tunnel. No Phren gateway is required.
 The SSH channel only opens the remote loopback address `127.0.0.1:24543` and
-exposes workspace and pane discovery, recent transcripts, and exact-session
-prompt delivery. There is no shell or arbitrary route API.
+exposes workspace and pane discovery, live transcripts, earlier history,
+attachments, exact-session prompt delivery, and interrupting the current turn.
+There is no shell or arbitrary route API.
 
 The endpoint was observed on installed `moshi-hook 0.3.19`, which returns
 `kind`, `capabilities`, and workspace `groups` with tab `children`. Tab metadata
@@ -36,8 +37,9 @@ future schemas without replacing the original data.
 The exported SSH authorization line restricts forwarding to the gateway and
 disables shell commands. The hook itself offers more capabilities than status;
 this authorization is not a server-side read-only credential scope. The chat
-client uses `/v1/prompt` for explicit text replies but exposes no arbitrary
-terminal keys, approval responses, or agent launch/stop operations.
+client uses `/v1/prompt` for deliberate replies and `/v1/keys` only for Escape
+to interrupt a working turn. It exposes no arbitrary terminal keys, approval
+responses, agent launch, or process termination API.
 
 See [phone setup and tests](README.md#live-herdr-sessions-over-tailscale--ssh),
 [Moshi gateway roles](https://getmoshi.app/docs/install-desktop),
@@ -62,36 +64,72 @@ uses the chosen computer's SSH connection, independent of Moshi's current card.
 The observed `moshi-hook 0.3.19` contract is:
 
 - `/v1/transcripts?source=codex|claude&session=…&limit=200` upgrades to a WebSocket
-  and returns a `backlog` frame containing numbered raw JSONL entries.
+  and returns a `backlog` frame containing numbered raw JSONL entries, followed
+  by `append` frames as the transcript changes. The helper emits transcript
+  records, so this is not a guarantee of token-by-token generation.
+- A WebSocket message `{type: "older", beforeLine, limit: 200}` returns an
+  `older` frame. Phren uses a short separate connection for each earlier page,
+  merges by absolute line/block identity, and retains pages on reconnect.
+- `POST /v1/upload` accepts JSON `{name, data}` with a generated filename and
+  base64 bytes. `{ok: true, path}` identifies the file on the chosen computer.
+  This installed helper writes a temporary `moshi-upload-*` directory.
+- `POST /v1/keys` accepts `{source, sessionId, keys: ["Escape"]}`. Phren checks
+  the exact pane identity and working/nonblocked state immediately beforehand.
 - `POST /v1/prompt` accepts JSON `{source, sessionId, pane, tab, text}` and returns
   `{ok: true}` when accepted. This acknowledges delivery, not agent completion.
 
-The current reader fetches one recent snapshot every three seconds while chat
-is visible and active. Each request has a 20-second deadline; transcripts are
-bounded to 8 MB, other responses to 1 MB, and prompts to 32 KB. Backgrounding,
-leaving chat, or changing the computer configuration cancels requests. This is
-recent conversation polling, not token streaming or full-history pagination.
+The visible chat maintains a live WebSocket and checks pane identity/status every
+three seconds. The initial connection deadline is 20 seconds; explicit POSTs
+have 60 seconds, and the live connection uses a ping/idle watchdog. Transcript
+frames are bounded to 8 MB, other responses to 1 MB, and prompts to 32 KB.
+Loaded history is capped at 4,000 visible blocks or 12 MB of text. Backgrounding,
+leaving chat, or changing the computer configuration cancels requests.
 Codex response items and Claude message blocks become native conversation rows;
 tool calls/results are collapsed. Reasoning and system records are excluded.
+Native paragraphs, headings, and fenced code support text selection, copy, and
+message sharing. Remote HTML is not rendered.
 
 Replies require a deliberate send. There is no retry on reconnect. If delivery
 is uncertain, the draft remains and the user is told to check the conversation
 before trying again. Drafts survive reopening within the app process and are
-keyed by the full conversation identity. Transcripts and drafts are not written
-to Git or persisted to disk. The context picker inserts selected project summary,
+keyed by the full conversation identity. Image/file drafts also survive
+reopening in the same process. Successfully uploaded paths are reused after a
+failed send; reconnect never uploads or delivers a draft automatically.
+Transcripts and drafts are not written to Git or persisted to disk. The context picker inserts selected project summary,
 finding, or skill text into the draft for review. Context uses the selected
 pane's directory and full store identity. Project memory, skills, and graph are
 also reachable from chat options.
 
-Attachments, in-app approvals, starting/stopping agents, and other providers
-are not implemented. Recognized blocked/waiting states disable reply and direct
-the user to the terminal. **Open terminal in Moshi** remains available.
+The composer accepts Photos, camera, Files, and an explicit native Paste image
+action. Up to four files (8 MB each) can be submitted. Photos are downsampled to
+2,048 pixels and re-encoded without source metadata. Attachments upload only
+when Send is tapped; returned local paths are appended to the agent prompt.
+This uses the selected computer's SSH tunnel and helper, not a public upload
+service or the Moshi phone app. Uploaded files follow the helper's temporary-file
+lifetime; Phren does not promise permanent storage or delete host files remotely.
+Recent sent image previews are kept in bounded memory. Older transcript image
+blobs are not yet fetched, and drafts/previews do not survive app termination.
 
-Core tests cover transcript normalization and identity guards. Transport tests
-cover fragmented frames and limits. An opt-in `PHREN_CHAT_E2E_FIXTURE` test uses
+The microphone opens an editable dictation sheet using Phren's existing Apple
+Speech integration. Recording starts only on explicit action, stops when leaving
+or backgrounding, and inserts text into the draft without sending it.
+
+In-app approvals, starting agents, process termination, and other providers
+are not implemented. Stop interrupts the current working turn with Escape.
+Recognized blocked/waiting states disable reply and direct the user to the terminal. **Open terminal in Moshi** remains available.
+
+Core tests cover transcript normalization, attachment bounds, history merging,
+and identity guards. Transport tests cover fragmented frames, limits, and
+rejection of a different computer before key loading or network access.
+An opt-in `PHREN_CHAT_E2E_FIXTURE` test uses
 an inert echo process in a disposable Herdr pane and a pinned SSH relay to the
 installed helper; it never prompts a real user's agent. UI tests cover native
-read/reply, pane choice, failed drafts, project context, and the Moshi preference.
+read/reply, pane choice, failed drafts/uploads, image preview/removal/send, earlier
+history after foregrounding, stop, code cards, project context, and the Moshi
+preference. `PHREN_CHAT_ITERATION_FIXTURE` additionally verifies a real image
+upload (including host file byte equality), live reply, earlier history, and
+Escape receipt through pinned SSH to an inert Codex-shaped process. These tests
+do not claim a physical iPhone camera/microphone check or model image analysis.
 
 ## Optional iPhone handoff
 
@@ -152,8 +190,9 @@ and that destination stays correct after row refreshes and returning to the app.
 - Add named Herdr servers and tmux only after observing their discovery contract.
 - Retain provider session/workspace/tab/pane metadata if the desktop registry
   becomes a source. Never execute its `focus` argv from a phone payload.
-- Add full-history loading, streaming updates, attachments, and structured
-  approvals after verifying the helper contracts and their lifecycle behavior.
+- Add structured approvals, questions, transcript image retrieval, and
+  repository diff/browser previews after verifying their exact-session contracts.
+- Track the ongoing [chat feature comparison](CHAT_FEATURES.md).
 
 The CLI's existing `AgentRecord`/`JoinedAgent` and Herdr provider remain in
 `packages/cli/src/agents/`. No process supervisor, remote task execution,
