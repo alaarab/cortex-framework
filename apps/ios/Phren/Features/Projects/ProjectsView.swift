@@ -240,6 +240,7 @@ struct ProjectDetailView: View {
             case .summary: SummaryTab(storeId: storeId, project: project)
             }
         }
+        .background(PhrenTheme.bg)
         .navigationTitle(model.hasMultipleStores ? "\(project) · \(model.storeName(for: storeId))" : project)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

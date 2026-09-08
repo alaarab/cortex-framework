@@ -9,17 +9,11 @@ struct LiveSessionsView: View {
     var body: some View {
         PhrenList {
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: "waveform.path")
-                        .font(.title2).foregroundStyle(PhrenTheme.cyan)
-                        .accessibilityHidden(true)
-                    Text("Your agents, within reach")
-                        .font(.title2.weight(.semibold))
-                    Text("See what's running on your computers and talk to your agents here.")
-                        .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
-                        .accessibilityIdentifier("agents-introduction")
-                }
-                .padding(.vertical, 12)
+                Text("See what's running on your computers and talk to your agents here.")
+                    .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
+                    .accessibilityIdentifier("agents-introduction")
+                    .padding(.vertical, 2)
+                    .listRowBackground(Color.clear)
             }
             Section {
                 if let preferences = try? LiveSessionPreferences.read(data) {
@@ -162,13 +156,8 @@ private struct LiveHostView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 connectionCard
-                if let host {
-                    NavigationLink { HerdrWorkspacesView(hostID: host.id) } label: {
-                        Label("Herdr workspaces & terminal", systemImage: "terminal").frame(maxWidth: .infinity, alignment: .leading).padding(16).phrenCard()
-                    }.buttonStyle(.plain)
-                }
                 if monitor.snapshot != nil && host != nil {
                     Picker("Session view", selection: $mode) {
                         ForEach(SessionViewMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -201,12 +190,9 @@ private struct LiveHostView: View {
                         }
                     }
                 }
-                if (preferences?.hosts.count ?? 0) > 1 {
-                    Text("If Moshi has sessions on several computers, make this computer's session active there first. Moshi's links cannot select a computer directly.")
-                        .font(.caption).foregroundStyle(PhrenTheme.textMuted)
-                }
+
             }
-            .padding(.horizontal, 16).padding(.vertical, 18)
+            .padding(.horizontal, 16).padding(.vertical, 8)
         }
         .background(PhrenTheme.bg)
         .navigationTitle(host?.name ?? "Computer removed")
@@ -214,7 +200,16 @@ private struct LiveHostView: View {
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search sessions")
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
-        .toolbar { Button("Connection settings", systemImage: "gearshape") { editing = true }.disabled(host == nil) }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if let host {
+                    NavigationLink { HerdrWorkspacesView(hostID: host.id) } label: {
+                        Label("Herdr workspaces & terminal", systemImage: "terminal")
+                    }
+                }
+                Button("Connection settings", systemImage: "gearshape") { editing = true }.disabled(host == nil)
+            }
+        }
         .onChange(of: host) { _, _ in
             monitor.snapshot = nil
             monitor.lastUpdated = nil
@@ -234,32 +229,30 @@ private struct LiveHostView: View {
     }
 
     private var connectionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     let fresh = monitor.isFresh(at: context.date)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Label(fresh ? "Live" : monitor.refreshing ? "Connecting…" : "Disconnected",
-                              systemImage: fresh ? "dot.radiowaves.left.and.right" : "wifi.slash")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(fresh ? PhrenTheme.cyan : PhrenTheme.textMuted)
-                        if let date = monitor.lastUpdated {
-                            Text("Last received \(date, style: .relative) ago\(fresh ? "" : " · showing previous status")")
-                                .font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Circle().fill(fresh ? PhrenTheme.cyan : PhrenTheme.textDim).frame(width: 5, height: 5)
+                            Text(fresh ? "Live" : monitor.refreshing ? "Connecting…" : "Disconnected")
+                            if let date = monitor.lastUpdated {
+                                Text("· updated \(date, style: .relative) ago").lineLimit(1)
+                            }
                         }
-                    }
+                        if monitor.snapshot != nil {
+                            Text(fresh
+                                 ? "\(sessions.count) tabs · \(sessions.filter { $0.tab.activity == .working }.count) working · \(sessions.filter { $0.tab.activity == .waiting }.count) waiting"
+                                 : "Showing previous status")
+                        }
+                    }.font(.caption).foregroundStyle(PhrenTheme.textMuted)
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: 0)
                 Button { refreshID = UUID() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 44, height: 44)
-                        .background(PhrenTheme.surfaceRaised, in: Circle())
-                }
-                .accessibilityLabel("Refresh now").disabled(monitor.refreshing)
-            }
-            if monitor.snapshot != nil {
-                Text("\(sessions.count) \(sessions.count == 1 ? "tab" : "tabs") · \(sessions.filter { $0.tab.activity == .working }.count) working · \(sessions.filter { $0.tab.activity == .waiting }.count) waiting")
-                    .font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                    Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
+                }.buttonStyle(.plain).foregroundStyle(PhrenTheme.textMuted)
+                    .accessibilityLabel("Refresh now").disabled(monitor.refreshing)
             }
             if let message = monitor.message { Text(message).font(.footnote).foregroundStyle(PhrenTheme.warning) }
             if let localError { Text(localError).font(.footnote).foregroundStyle(PhrenTheme.warning) }
@@ -270,7 +263,8 @@ private struct LiveHostView: View {
                 Button("Trust verified fingerprint") { trust(fingerprint) }
             }
         }
-        .padding(16).phrenCard()
+        .padding(.horizontal, 4)
+        .accessibilityIdentifier("live-connection-status")
     }
 
     private func sectionHeading(_ title: String, count: Int) -> some View {
@@ -280,7 +274,7 @@ private struct LiveHostView: View {
             Text("\(count)").font(.caption.monospacedDigit())
         }
         .foregroundStyle(PhrenTheme.textMuted)
-        .padding(.horizontal, 4).padding(.top, 10)
+        .padding(.horizontal, 4).padding(.top, 6)
         .accessibilityAddTraits(.isHeader)
     }
 
@@ -363,62 +357,38 @@ private struct LiveSessionCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        HStack(spacing: 0) {
             AgentConversationLink(session: session) {
-                HStack(alignment: .top, spacing: 12) {
-                    SessionStatusIcon(activity: session.tab.activity, fresh: fresh)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(session.tab.displayTitle).font(.headline).foregroundStyle(PhrenTheme.text).lineLimit(2)
-                        Text([match?.project.name ?? session.workspaceName, session.tab.agent].compactMap { $0 }.joined(separator: " · "))
+                HStack(spacing: 10) {
+                    Image(systemName: session.tab.activity.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(fresh ? session.tab.activity.color : PhrenTheme.textMuted)
+                        .frame(width: 28, height: 32)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(session.tab.displayTitle).font(.subheadline.weight(.semibold))
+                            .foregroundStyle(PhrenTheme.text).lineLimit(2)
+                        Text([match?.project.name ?? session.workspaceName, session.tab.agent,
+                              session.tab.status + (fresh ? "" : " · stale")].compactMap { $0 }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(PhrenTheme.textMuted).lineLimit(2)
-                        Text(session.tab.status + (fresh ? "" : " · stale"))
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(fresh ? session.tab.activity.color : PhrenTheme.textMuted)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(PhrenTheme.textMuted)
-                        .padding(.top, 4)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .contentShape(Rectangle())
+                .padding(.vertical, 12).padding(.leading, 10)
+                .frame(minHeight: 72).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("live-chat:\(session.workspaceID):\(session.tab.id)")
             .disabled(!fresh)
-
-            HStack(spacing: 12) {
-                AgentConversationLink(session: session, honorsPreference: false) {
-                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
-                        .font(.callout.weight(.medium)).frame(minHeight: 44)
-                }
-                .buttonStyle(.plain).foregroundStyle(PhrenTheme.cyan)
-                .disabled(!fresh)
-                Spacer(minLength: 0)
-                if let destination = try? session.link().url() {
-                    MoshiSessionOpenLink(destination: destination, workspaceName: session.workspaceName)
-                        .labelStyle(.iconOnly).frame(width: 44)
-                        .id(destination)
-                        .font(.subheadline.weight(.medium))
-                        .tint(PhrenTheme.cyan)
-                        .accessibilityIdentifier("live-open:\(session.workspaceID):\(session.tab.id)")
-                        .disabled(!fresh)
-                }
-                Button(action: onDetails) {
-                    Image(systemName: "info.circle").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("Session details")
-                .accessibilityIdentifier("live-detail:\(session.workspaceID):\(session.tab.id)")
-                if let project = match?.project, model.sessionProjects.contains(project) {
-                    NavigationLink { GraphView(focusProject: project.name, initialStoreId: project.storeID) } label: {
-                        Image(systemName: "circle.hexagongrid").frame(width: 44, height: 44)
-                            .background(PhrenTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    .accessibilityLabel("Graph for \(project.name)")
-                    .accessibilityIdentifier("live-graph:\(project.storeID):\(project.name)")
-                }
+            Button(action: onDetails) {
+                Image(systemName: "info.circle").font(.system(size: 17))
+                    .foregroundStyle(PhrenTheme.textMuted).frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain).accessibilityLabel("Session details")
+            .accessibilityIdentifier("live-detail:\(session.workspaceID):\(session.tab.id)")
         }
-        .padding(16)
-        .phrenCard()
+        .padding(.trailing, 2)
+        .background(PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 

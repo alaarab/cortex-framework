@@ -5,20 +5,28 @@ import SwiftUI
 
 @Observable @MainActor
 private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDelegate {
-    let terminal = TerminalView(frame: .zero, font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+    let terminal = TouchTerminalView(frame: .zero, font: .monospacedSystemFont(ofSize: 12, weight: .regular),
                                 options: TerminalOptions(cols: 80, rows: 24, scrollback: 2_000))
     var connected = false
     var error: String?
     var control = false
+    #if DEBUG && targetEnvironment(simulator)
+    var fixtureReport = ""
+    private var fixtureInput = ""
+    #endif
     private var socket: HerdrTerminalSocket?
     private var writes: Task<Void, Never>?
     private var generation = UUID()
     override init() {
         super.init()
         terminal.terminalDelegate = self
+        terminal.configureTouchInput()
         terminal.nativeBackgroundColor = UIColor(PhrenTheme.bgSunken)
         terminal.nativeForegroundColor = UIColor(PhrenTheme.text)
         terminal.caretColor = UIColor(PhrenTheme.cyan)
+        terminal.selectedTextBackgroundColor = UIColor(PhrenTheme.lavender.opacity(0.30))
+        terminal.selectedTextForegroundColor = UIColor(PhrenTheme.text)
+        terminal.selectionHandleColor = UIColor(PhrenTheme.lavender)
         terminal.accessibilityIdentifier = "herdr-terminal"
     }
     func run(host: LiveHost, session: DiscoveredMoshiSession?, target: AgentChatTarget?, paneID: String?) async {
@@ -31,9 +39,28 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         do {
             #if DEBUG && targetEnvironment(simulator)
             if AgentChatFixture.enabled {
-                terminal.feed(text: "\u{1B}[2J\u{1B}[HPhren · Herdr\r\nFixture workspace · pane 1\r\n$ ")
+                try await Task.sleep(for: .milliseconds(200))
+                fixtureInput = ""
+                let args = ProcessInfo.processInfo.arguments
+                if args.contains("--terminal-mouse-fixture") {
+                    terminal.feed(text: "\u{1B}[?1049h\u{1B}[?1002h\u{1B}[?1006h")
+                    terminal.feed(text: (1...18).map { "Selectable terminal text · line \($0)" }.joined(separator: "\r\n"))
+                } else if args.contains("--terminal-scrollback-fixture") {
+                    terminal.feed(text: (1...100).map { "Scrollback history · line \($0)" }.joined(separator: "\r\n"))
+                } else {
+                    terminal.feed(text: "\u{1B}[2J\u{1B}[HPhren · Herdr\r\nFixture workspace · pane 1\r\n$ ")
+                }
+                terminal.feed(text: "\u{1B}[2 q") // Steady cursor keeps UI automation idle.
                 connected = true
-                while !Task.isCancelled { try await Task.sleep(for: .seconds(1)) }
+                while !Task.isCancelled {
+                    let report: [String: Any] = ["input": fixtureInput,
+                        "selected": terminal.selection.getSelectedText(),
+                        "topRow": terminal.getTerminal().getTopVisibleRow(),
+                        "copyActions": terminal.copyActions]
+                    let updated = String(decoding: try JSONSerialization.data(withJSONObject: report, options: .sortedKeys), as: UTF8.self)
+                    if fixtureReport != updated { fixtureReport = updated }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
                 return
             }
             #endif
@@ -70,6 +97,9 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         }
     }
     func input(_ text: String) {
+        #if DEBUG && targetEnvironment(simulator)
+        if AgentChatFixture.enabled { if connected { fixtureInput += text }; return }
+        #endif
         guard connected, let socket else { return }
         let previous = writes, run = generation
         writes = Task {
@@ -80,6 +110,9 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         }
     }
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        #if DEBUG && targetEnvironment(simulator)
+        if AgentChatFixture.enabled { return }
+        #endif
         guard connected, let socket else { return }
         Task { try? await socket.resize(columns: newCols, rows: newRows) }
     }
@@ -115,6 +148,7 @@ struct HerdrTerminalView: View {
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
     @State private var model = HerdrTerminalModel()
     @State private var visible = false
+    @State private var directions = false
     @State private var reconnect = UUID()
     private var currentHost: LiveHost? { (try? LiveSessionPreferences.read(hostData))?.hosts.first { $0.id == host.id } }
     private var active: Bool { visible && scenePhase == .active && currentHost == host }
@@ -131,19 +165,56 @@ struct HerdrTerminalView: View {
             }
             if currentHost != host { Text("Connection settings changed. Reopen Herdr from the computer list.").font(.footnote).padding() }
             HerdrTerminalSurface(model: model).padding(.horizontal, 4)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    key("Esc", "\u{1B}"); key("Tab", "\t")
-                    Button("Ctrl") { model.terminal.controlModifier.toggle(); model.control = model.terminal.controlModifier }
-                        .tint(model.control ? PhrenTheme.cyan : PhrenTheme.textMuted)
-                    key("↑", "\u{1B}[A"); key("↓", "\u{1B}[B"); key("←", "\u{1B}[D"); key("→", "\u{1B}[C")
-                    Button { if model.terminal.isFirstResponder { model.terminal.resignFirstResponder() } else { model.terminal.becomeFirstResponder() } } label: {
-                        Image(systemName: "keyboard").frame(minWidth: 40, minHeight: 44)
-                    }.accessibilityLabel("Toggle terminal keyboard")
-                }.buttonStyle(.bordered).controlSize(.small).padding(8).disabled(!model.connected || !active)
-            }.background(PhrenTheme.surface)
+            HStack(spacing: 0) {
+                key("Esc", "\u{1B}"); key("Tab", "\t")
+                Button {
+                    model.terminal.controlModifier.toggle()
+                    model.control = model.terminal.controlModifier
+                } label: {
+                    Text("Ctrl").foregroundStyle(model.control ? PhrenTheme.cyan : PhrenTheme.text)
+                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        .background(model.control ? PhrenTheme.cyan.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                }.accessibilityValue(model.control ? "On" : "Off")
+                Button { directions.toggle() } label: {
+                    Image(systemName: "dpad").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }.accessibilityLabel("Arrow keys")
+                    .popover(isPresented: $directions) {
+                        VStack(spacing: 0) {
+                            arrow("arrow.up", "Up", "\u{1B}[A")
+                            HStack(spacing: 0) {
+                                arrow("arrow.left", "Left", "\u{1B}[D")
+                                arrow("arrow.down", "Down", "\u{1B}[B")
+                                arrow("arrow.right", "Right", "\u{1B}[C")
+                            }
+                        }.padding(8).presentationCompactAdaptation(.popover)
+                    }
+                Button { model.terminal.paste(nil) } label: {
+                    Image(systemName: "document.on.clipboard").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }.accessibilityLabel("Paste into terminal")
+                Button {
+                    if model.terminal.isFirstResponder { model.terminal.resignFirstResponder() }
+                    else { model.terminal.becomeFirstResponder() }
+                } label: {
+                    Image(systemName: "keyboard").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }.accessibilityLabel("Toggle terminal keyboard")
+            }
+            .font(.system(size: 16, weight: .medium)).buttonStyle(.plain)
+            .foregroundStyle(PhrenTheme.text).padding(.horizontal, 8).padding(.vertical, 2)
+            .background(PhrenTheme.bgSunken)
+            .overlay(alignment: .top) { Rectangle().fill(PhrenTheme.border).frame(height: 0.5) }
+            .accessibilityIdentifier("terminal-toolbar")
+            .disabled(!model.connected || !active)
         }
+        #if DEBUG && targetEnvironment(simulator)
+        .overlay(alignment: .topLeading) {
+            if AgentChatFixture.enabled {
+                Text(model.fixtureReport).font(.system(size: 1)).frame(width: 1, height: 1)
+                    .accessibilityIdentifier("terminal-fixture-report")
+            }
+        }
+        #endif
         .background(PhrenTheme.bgSunken).navigationTitle("Herdr terminal").navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Reconnect", systemImage: "arrow.clockwise") { reconnect = UUID() }.disabled(!active)
@@ -155,7 +226,14 @@ struct HerdrTerminalView: View {
         }
     }
     private func key(_ title: String, _ sequence: String) -> some View {
-        Button(title) { model.input(sequence) }.frame(minHeight: 44)
+        Button { model.input(sequence) } label: {
+            Text(title).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+    }
+    private func arrow(_ symbol: String, _ title: String, _ sequence: String) -> some View {
+        Button { model.input(sequence) } label: {
+            Image(systemName: symbol).frame(width: 48, height: 44).contentShape(Rectangle())
+        }.accessibilityLabel(title).disabled(!model.connected || !active)
     }
     private struct Run: Equatable { let active: Bool; let reconnect: UUID }
 }

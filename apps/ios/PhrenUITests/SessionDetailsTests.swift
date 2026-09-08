@@ -2,6 +2,34 @@ import XCTest
 
 final class SessionDetailsTests: XCTestCase {
     @MainActor
+    func testRowsGrowForLargeTextAndKeepDetailsReachable() {
+        let app = launch()
+        let title = app.staticTexts["Polish the phone app"]
+        let metadata = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "codex", "Working")).firstMatch
+        XCTAssertTrue(metadata.exists)
+        XCTAssertLessThanOrEqual(title.frame.maxY, metadata.frame.minY)
+        let details = app.buttons["live-detail:w7:w7:t9"]
+        XCTAssertTrue(details.isHittable)
+        XCTAssertGreaterThanOrEqual(details.frame.height, 44)
+        capture(app, "Readable compact session rows at larger text sizes")
+        details.tap()
+        XCTAssertTrue(app.navigationBars["Session details"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testSessionRowsFitWithoutRepeatedActionTiles() {
+        let app = launch()
+        let first = app.buttons["live-chat:w7:w7:t9"]
+        XCTAssertLessThanOrEqual(first.frame.height, 96)
+        XCTAssertGreaterThanOrEqual(first.frame.height, 44)
+        XCTAssertTrue(app.buttons["live-detail:w8:w8:t1"].isHittable)
+        let status = app.descendants(matching: .any).matching(identifier: "live-connection-status").firstMatch
+        XCTAssertLessThanOrEqual(status.frame.height, 60)
+        XCTAssertFalse(app.buttons["Chat"].exists)
+        capture(app, "Compact sessions and inline connection status")
+    }
+
+    @MainActor
     func testSearchAndActivityKeepTheMatchingSession() {
         let app = launch()
         capture(app, "Workspace cards")

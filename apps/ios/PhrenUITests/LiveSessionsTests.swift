@@ -35,15 +35,15 @@ final class LiveSessionsTests: XCTestCase {
         let project = app.buttons["live-project:team/brain:demo"]
         XCTAssertTrue(project.waitForExistence(timeout: 5))
         project.tap()
-        app.navigationBars["Session details"].buttons["Done"].tap()
-        let graph = app.buttons["live-graph:team/brain:demo"]
+        let graph = app.buttons["Explore graph"]
         XCTAssertTrue(graph.waitForExistence(timeout: 5))
         graph.tap()
         XCTAssertTrue(app.webViews.staticTexts["DEMO"].firstMatch.waitForExistence(timeout: 20))
         app.buttons["graph-back"].tap()
-        let stale = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "showing previous status")).firstMatch
+        app.navigationBars["Session details"].buttons["Done"].tap()
+        let stale = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Showing previous status")).firstMatch
         XCTAssertTrue(stale.waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["Working · stale"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Working · stale")).firstMatch.exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Live sessions retain clearly stale status"
         screenshot.lifetime = .keepAlways
@@ -57,8 +57,9 @@ final class LiveSessionsTests: XCTestCase {
         XCTAssertNotNil(reopenedLiveItem)
         reopenedLiveItem?.tap()
         computer.tap()
-        XCTAssertTrue(graph.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["live-detail:w1:w1:t1"].waitForExistence(timeout: 10))
         app.buttons["live-detail:w1:w1:t1"].tap()
+        XCTAssertTrue(graph.waitForExistence(timeout: 5))
         app.buttons["Change project link"].tap()
         app.buttons["Remove directory link"].tap()
         XCTAssertTrue(app.buttons["Link to project"].waitForExistence(timeout: 5))

@@ -234,6 +234,7 @@ generated mirrors refresh when phren links the project or its MCP poller pulls. 
 agent setup. **Live sessions** separately reads running Herdr tabs through the
 computer's Moshi hook. Hook configuration remains computer-local.
 See [agent connection design notes](AGENT_CONNECTIONS.md) for the Moshi/Herdr path.
+See [iPhone design notes](DESIGN.md) for session density, terminal gestures, and keyboard layout.
 
 Editors keep a separate draft during live refreshes and confirm before
 discarding changes. Saves and deletes carry the content the user opened, so
@@ -271,6 +272,12 @@ delivery preserves the draft and never retries automatically. Text and attachmen
 drafts survive process relaunch in protected local storage. They do not sync to Git.
 
 **Herdr workspaces & terminal** on a computer opens native workspace, tab and pane navigation. Choose a named server, create a workspace in a folder, add tabs/panes, rename or close workspaces/tabs, and use the terminal without leaving Phren. Closing a workspace or tab asks before stopping its processes.
+
+Open Herdr from the computer's terminal toolbar button. Session rows open chat;
+their info button opens the terminal, Moshi, project graph, and session metadata.
+The terminal has one compact key bar with a directional pad and explicit Paste.
+Swipe to scroll; hold to select text and drag to extend it, then choose Copy or
+Paste. A swipe never sends a desktop selection drag to Herdr.
 
 The adapter requires the computer's existing `moshi-hook` (verified with 0.3.19)
 and a default or named Herdr server, but does not require the Moshi iPhone app. Chat receives
