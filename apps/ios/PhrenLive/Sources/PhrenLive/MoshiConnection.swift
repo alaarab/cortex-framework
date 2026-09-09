@@ -13,6 +13,7 @@ public enum LiveConnectionError: LocalizedError, Equatable {
     case timeout
     case disconnected
     case response(Int)
+    case gatewayRejection(status: Int, reason: String)
     case oversized
 
     public var errorDescription: String? {
@@ -22,7 +23,8 @@ public enum LiveConnectionError: LocalizedError, Equatable {
         case .authentication: return "SSH did not accept this device's key. Add the public key to the selected user's authorized_keys file and enable Remote Login or SSH."
         case .timeout: return "The connection timed out. Check Tailscale, SSH, and that moshi-hook is running."
         case .disconnected: return "The connection closed before session status arrived. Check that moshi-hook is running and SSH forwarding is allowed."
-        case .response(let status): return "The Moshi hook returned HTTP \(status). Check or update moshi-hook on the computer."
+        case .response(let status): return "The computer returned HTTP \(status)."
+        case .gatewayRejection(let status, let reason): return "\(reason) (HTTP \(status))"
         case .oversized: return "The Moshi hook response exceeded this request's size limit."
         }
     }
@@ -203,6 +205,8 @@ final class GatewayResponse: ChannelInboundHandler {
     let request: GatewayRequest
     private var body = Data()
     private var receivedHead = false
+    private var status = 200
+    private var responseLimit: Int { status == 200 ? request.maximumResponseBytes : min(request.maximumResponseBytes, 32_768) }
     init(exchange: Exchange, request: GatewayRequest = .workspaces) { self.exchange = exchange; self.request = request }
     func channelActive(context: ChannelHandlerContext) {
         var headers = HTTPHeaders([("Host", "127.0.0.1:24543"), ("Accept", "application/json"), ("Connection", "close")])
@@ -221,20 +225,30 @@ final class GatewayResponse: ChannelInboundHandler {
         guard !exchange.finished else { return }
         switch unwrapInboundIn(data) {
         case .head(let head):
-            guard !receivedHead, head.status.code == 200 else {
+            guard !receivedHead, head.status.code == 200 || (400...599).contains(head.status.code) else {
                 exchange.finish(.failure(LiveConnectionError.response(Int(head.status.code)))); return
             }
             receivedHead = true
-            if let length = head.headers.first(name: "content-length"), let size = Int(length), size > request.maximumResponseBytes {
+            status = Int(head.status.code)
+            if let length = head.headers.first(name: "content-length"), let size = Int(length), size > responseLimit {
                 exchange.finish(.failure(LiveConnectionError.oversized))
             }
         case .body(let bytes):
-            guard receivedHead, body.count + bytes.readableBytes <= request.maximumResponseBytes else {
+            guard receivedHead, body.count + bytes.readableBytes <= responseLimit else {
                 exchange.finish(.failure(LiveConnectionError.oversized)); return
             }
             body.append(contentsOf: bytes.readableBytesView)
         case .end:
-            exchange.finish(receivedHead ? .success(body) : .failure(LiveConnectionError.disconnected))
+            guard receivedHead else { exchange.finish(.failure(LiveConnectionError.disconnected)); return }
+            if status != 200 {
+                let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+                let reason = (object?["error"] as? String).map {
+                    String($0.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) || CharacterSet.whitespacesAndNewlines.contains($0) })
+                        .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                }.map { String($0.prefix(320)) }
+                exchange.finish(.failure(reason?.isEmpty == false
+                    ? LiveConnectionError.gatewayRejection(status: status, reason: reason!) : .response(status)))
+            } else { exchange.finish(.success(body)) }
         }
     }
     func errorCaught(context: ChannelHandlerContext, error: Error) { exchange.finish(.failure(error)) }

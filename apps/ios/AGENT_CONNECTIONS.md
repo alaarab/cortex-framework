@@ -102,6 +102,13 @@ workspace, and tab. It never selects the newest transcript or guesses by title.
 The pane is checked again immediately before each prompt. If its provider or
 conversation changes, sending stops until the user reopens chat. Native routing
 uses the chosen computer's SSH connection, independent of Moshi's current card.
+The prompt addresses that live pane on the configured Herdr server. Supplying
+`sessionId` to the helper selects its remembered terminal location even when
+`pane` is also present; an absent or unusable record can reject a live Herdr
+conversation with HTTP 404/422. Phren does not depend on that remembered location
+for message delivery. Its last identity check is client-side; the helper also
+checks the live pane's provider, but does not atomically compare the conversation
+ID in this pane-addressed request.
 
 The observed `moshi-hook 0.3.19` contract is:
 
@@ -117,8 +124,10 @@ The observed `moshi-hook 0.3.19` contract is:
   This installed helper writes a temporary `moshi-upload-*` directory.
 - `POST /v1/keys` accepts `{source, sessionId, keys: ["Escape"]}`. Phren checks
   the exact pane identity and working/nonblocked state immediately beforehand.
-- `POST /v1/prompt` accepts JSON `{source, sessionId, pane, tab, text}` and returns
-  `{ok: true}` when accepted. This acknowledges delivery, not agent completion.
+- `POST /v1/prompt?mux=herdr:<server>` accepts JSON `{source, pane, text}` over
+  the loopback SSH forward and returns `{ok: true}` when accepted. Phren sends
+  one explicit pane, without `sessionId` or a tab/focus fallback. This
+  acknowledges delivery, not agent completion.
 
 The visible chat maintains a live WebSocket and checks pane identity/status every
 three seconds. The initial connection deadline is 20 seconds; explicit POSTs
@@ -133,7 +142,11 @@ message sharing. Remote HTML is not rendered.
 
 Replies require a deliberate send. There is no retry on reconnect. If delivery
 is uncertain, the draft remains and the user is told to check the conversation
-before trying again. Drafts survive process relaunch and are keyed by the full conversation identity, including the Herdr server. Text and attachment bytes are stored atomically in protected, backup-excluded Application Support files (four attachments per draft, 256 MB total attachment storage). Corrupt/future manifests are preserved and cannot be overwritten. Successfully uploaded paths are reused after a
+before trying again. Failed HTTP requests retain a bounded plain JSON error
+reason (32 KB response, 320 displayed characters), rather than recommending a
+helper upgrade for every rejection. If the transcript connection drops, the
+composer shows Reconnect; reconnecting never submits the draft.
+Drafts survive process relaunch and are keyed by the full conversation identity, including the Herdr server. Text and attachment bytes are stored atomically in protected, backup-excluded Application Support files (four attachments per draft, 256 MB total attachment storage). Corrupt/future manifests are preserved and cannot be overwritten. Successfully uploaded paths are reused after a
 failed send; reconnect never uploads or delivers a draft automatically.
 Transcripts stay in bounded memory. Drafts are never written to Git or synchronized. Uploaded paths are not persisted across launches; attachments upload again when the user sends. The context picker inserts selected project summary,
 finding, or skill text into the draft for review. Context uses the selected
@@ -160,7 +173,9 @@ Approvals stream from `/events` and render inline. Question cards recognize Code
 **Repository changes** validates the selected pane and starts `/v1/diff/start` with that pane's cwd. Phren accepts only the returned local `/apps/diff/diff_<hex>/` path and renders `api/status`. Separate diff IDs prevent other repository views from changing the selected diff. Binary or omitted/oversized patches offer the native terminal; this viewer does not stage, discard, or commit files.
 
 Core tests cover transcript normalization, attachment bounds, history merging,
-and identity guards. Transport tests cover fragmented frames, limits, and
+and identity guards. Transport tests cover fragmented frames, limits, named
+Herdr prompt routing, rejected recorded terminal locations, bounded HTTP error
+reasons, single-attempt delivery, and
 rejection of a different computer before key loading or network access.
 An opt-in `PHREN_CHAT_E2E_FIXTURE` test uses
 an inert echo process in a disposable Herdr pane and a pinned SSH relay to the

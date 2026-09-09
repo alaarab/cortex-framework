@@ -9,6 +9,8 @@ import UIKit
     static var enabled: Bool { AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--native-chat-fixture") }
     static var sent: [(String, String)] = []
     static var reads = 0
+    static var hasReadTranscript = false
+    static var sendAttempts = 0
     static var stopped = false
     static var answered = false
     static func approval(_ target: AgentChatTarget) throws -> AgentApproval? {
@@ -33,7 +35,7 @@ import UIKit
     }
     static func panes(_ session: DiscoveredMoshiSession) throws -> AgentChatPanes {
         reads += 1
-        if flag("--chat-offline") && reads > 1 { throw LiveConnectionError.disconnected }
+        if flag("--chat-offline") && hasReadTranscript { throw LiveConnectionError.disconnected }
         var panes: [[String: Any]] = [["id": "\(session.workspaceID):p1", "label": "1", "title": "Polish the phone app", "agent": "codex",
                                      "agentStatus": ((flag("--chat-blocked") || flag("--chat-approval") || flag("--chat-question")) && !answered) ? "blocked" : (flag("--chat-working") && !stopped ? "working" : "idle"), "sessionId": "fixture-codex-session", "cwd": "/work/phone"]]
         if flag("--chat-multiple") {
@@ -43,6 +45,7 @@ import UIKit
                                        workspaceID: session.workspaceID, tabID: session.tab.id)
     }
     static func transcript(_ target: AgentChatTarget) throws -> AgentChatTranscript {
+        hasReadTranscript = true
         var entries: [[String: Any]] = []
         func append(_ role: String, _ text: String) {
             let raw: [String: Any] = target.source == "codex"
@@ -73,6 +76,10 @@ import UIKit
     }
     static func send(_ target: AgentChatTarget, text: String) async throws {
         try await Task.sleep(for: .milliseconds(250))
+        sendAttempts += 1
+        if flag("--chat-send-rejected"), sendAttempts == 1 {
+            throw LiveConnectionError.gatewayRejection(status: 422, reason: "The selected terminal is unavailable.")
+        }
         if flag("--chat-send-fails") { throw LiveConnectionError.disconnected }
         sent.append((target.id, text))
     }

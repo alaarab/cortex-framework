@@ -283,6 +283,10 @@ and skills** add project summaries, findings, or skills to a draft for review.
 Chat options also open project memory, skills, and the graph. Failed or uncertain
 delivery preserves the draft and never retries automatically. Text and attachment
 drafts survive process relaunch in protected local storage. They do not sync to Git.
+Messages target the live Herdr pane on the selected computer and named server,
+after checking that it still contains the chosen conversation. A rejected send
+shows the computer's error reason; a lost connection shows **Reconnect** beside
+the composer without submitting your draft.
 
 **Herdr workspaces & terminal** on a computer opens native workspace, tab and pane navigation. Choose a named server, create a workspace in a folder, add tabs/panes, rename or close workspaces/tabs, and use the terminal without leaving Phren. Closing a workspace or tab asks before stopping its processes.
 

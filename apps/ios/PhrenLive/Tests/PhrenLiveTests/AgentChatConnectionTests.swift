@@ -94,7 +94,9 @@ final class AgentChatConnectionTests: XCTestCase {
         do {
             _ = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: "/v1/approvals/answer", body: stale))
             XCTFail("A missing approval must fail closed")
-        } catch { XCTAssertEqual(error as? LiveConnectionError, .response(409)) }
+        } catch {
+            guard case .gatewayRejection(status: 409, reason: _) = error as? LiveConnectionError else { return XCTFail("Expected the helper's stale-approval rejection: \(error)") }
+        }
         try await server.close()
     }
 
@@ -183,8 +185,9 @@ final class AgentChatConnectionTests: XCTestCase {
         let text = "Review `file.swift`\n$(not-a-command) \"quoted\""
         let request = try GatewayRequest.prompt(target, text: text)
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.body)) as? [String: String])
-        XCTAssertEqual(request.path, "/v1/prompt")
-        XCTAssertEqual(body, ["source": "claude", "sessionId": "fixture", "pane": "w7:p2", "tab": "w7:t1", "text": text])
+        XCTAssertEqual(URLComponents(string: request.path)?.path, "/v1/prompt")
+        XCTAssertEqual(URLComponents(string: request.path)?.queryItems, [URLQueryItem(name: "mux", value: target.muxID)])
+        XCTAssertEqual(body, ["source": "claude", "pane": "w7:p2", "text": text])
     }
 
     func testFragmentedTranscriptAndPingFramesReassembleOneBoundedSnapshot() throws {
@@ -228,9 +231,10 @@ final class AgentChatConnectionTests: XCTestCase {
         let metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: String])
         let server = try await ChatRelaySSH.start()
         defer { Task { try await server.close() } }
-        let host = try server.host()
+        var host = try server.host()
+        if let mux = metadata["mux"], mux.hasPrefix("herdr:") { host.herdrSession = String(mux.dropFirst(6)) }
         let target = try AgentChatTarget(hostID: host.id, workspaceID: XCTUnwrap(metadata["workspace"]), tabID: XCTUnwrap(metadata["tab"]),
-                                         paneID: XCTUnwrap(metadata["pane"]), source: metadata["source"] ?? "claude", sessionID: XCTUnwrap(metadata["session"]))
+                                         paneID: XCTUnwrap(metadata["pane"]), source: metadata["source"] ?? "claude", sessionID: XCTUnwrap(metadata["session"]), muxID: host.muxID)
         let key = server.deviceKey.rawRepresentation
         let panes = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: target.workspaceID, tabID: target.tabID)
         _ = try panes.validate(target)
@@ -243,7 +247,7 @@ final class AgentChatConnectionTests: XCTestCase {
         XCTAssertTrue(after.messages.contains { $0.role == .assistant && $0.text == "Echo: " + message })
 
         let wrong = try AgentChatTarget(hostID: host.id, workspaceID: target.workspaceID, tabID: target.tabID, paneID: target.paneID,
-                                        source: target.source, sessionID: UUID().uuidString)
+                                        source: target.source, sessionID: UUID().uuidString, muxID: host.muxID)
         do { try await MoshiConnection.sendChat(host: host, privateKey: key, target: wrong, text: "MUST NOT ARRIVE"); XCTFail("Changed identity must reject before delivery") }
         catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
         let final = try await MoshiConnection.chatTranscript(host: host, privateKey: key, target: target)

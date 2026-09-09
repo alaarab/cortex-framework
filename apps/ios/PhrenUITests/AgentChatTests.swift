@@ -202,6 +202,47 @@ final class AgentChatTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedSendKeepsDraftAndAllowsExplicitRetry() {
+        let app = launch(extra: ["--chat-send-rejected", "--chat-working"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Keep it up")
+        app.buttons["chat-send"].tap()
+        let error = app.staticTexts["chat-delivery-error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(error.label.contains("The selected terminal is unavailable."))
+        XCTAssertFalse(error.label.contains("update moshi-hook"))
+        XCTAssertEqual(composer.value as? String, "Keep it up")
+        XCTAssertTrue(app.buttons["chat-send"].isEnabled)
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertFalse(app.staticTexts["Received in codex on w7:p1: Keep it up"].exists)
+        XCTAssertTrue(app.buttons["chat-send"].waitForExistence(timeout: 5))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["chat-send"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
+        capture(app, "Rejected message keeps an editable draft")
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.staticTexts["Received in codex on w7:p1: Keep it up"].waitForExistence(timeout: 8))
+        XCTAssertFalse(error.exists)
+    }
+
+    @MainActor
+    func testOfflineComposerShowsReconnectWithoutLosingDraft() {
+        let app = launch(extra: ["--chat-offline"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Keep this while offline")
+        let reconnect = app.buttons["chat-reconnect"]
+        XCTAssertTrue(reconnect.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["chat-send"].isEnabled)
+        reconnect.tap()
+        XCTAssertEqual(composer.value as? String, "Keep this while offline")
+        XCTAssertFalse(app.staticTexts["Received in codex on w7:p1: Keep this while offline"].exists)
+        capture(app, "Reconnect is visible beside the draft")
+    }
+
+    @MainActor
     func testFailedDeliveryKeepsDraftAndDoesNotRetryOnForeground() {
         let app = launch(extra: ["--chat-send-fails"])
         app.buttons["live-chat:w7:w7:t9"].tap()

@@ -276,7 +276,14 @@ struct AgentChatView: View {
                 }.accessibilityIdentifier("chat-attachments")
             }
             if let status = model.deliveryStatus { Text(status).font(.caption).foregroundStyle(PhrenTheme.cyan) }
-            if selectedPane?.agentStatus == "working", !model.needsAnswer {
+            if active, model.target != nil, !model.connected, !model.loading {
+                HStack {
+                    Label("Reconnecting…", systemImage: "wifi.exclamationmark").font(.caption)
+                    Spacer()
+                    Button("Reconnect") { refresh = UUID() }
+                        .font(.caption.weight(.semibold)).accessibilityIdentifier("chat-reconnect")
+                }.foregroundStyle(PhrenTheme.warning)
+            } else if selectedPane?.agentStatus == "working", !model.needsAnswer {
                 HStack {
                     Label("Agent is working", systemImage: "waveform").font(.caption).foregroundStyle(PhrenTheme.cyan)
                     Spacer()

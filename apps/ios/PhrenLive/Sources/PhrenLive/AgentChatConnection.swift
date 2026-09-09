@@ -107,9 +107,11 @@ struct GatewayRequest: Sendable {
         Self(path: "/v1/keys", body: try JSONSerialization.data(withJSONObject: ["source": target.source, "sessionId": target.sessionID, "keys": ["Escape"]]))
     }
     static func prompt(_ target: AgentChatTarget, text: String) throws -> Self {
-        Self(path: "/v1/prompt", body: try JSONSerialization.data(withJSONObject: [
-            "source": target.source, "sessionId": target.sessionID, "pane": target.paneID,
-            "tab": target.tabID, "text": text,
+        // sessionId makes the helper use its recorded terminal location, even
+        // when pane is also supplied. Use the live pane we just validated and
+        // explicitly select its Herdr server. Never fall back to a focused tab.
+        Self(path: path("/v1/prompt", ["mux": target.muxID]), body: try JSONSerialization.data(withJSONObject: [
+            "source": target.source, "pane": target.paneID, "text": text,
         ], options: [.sortedKeys]))
     }
     func scoped(to host: LiveHost) -> Self {

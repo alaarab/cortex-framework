@@ -1,0 +1,134 @@
+import Foundation
+import NIOCore
+import NIOEmbedded
+import NIOHTTP1
+import NIOPosix
+import PhrenKit
+import XCTest
+@testable import PhrenLive
+
+final class ChatDeliveryTests: XCTestCase {
+    func testLivePaneDeliveryIgnoresRejectedRecordedLocationAndPinsNamedServer() async throws {
+        let helper = try await DeliveryHelper.start()
+        let ssh = try await ChatRelaySSH.start(forwardPorts: [24543: helper.channel.localAddress!.port!])
+        defer { Task { try await ssh.close(); try await helper.channel.close() } }
+        var host = try ssh.host(); host.herdrSession = "phone-test"
+        let target = try AgentChatTarget(hostID: host.id, workspaceID: "w1", tabID: "w1:t1", paneID: "w1:p1",
+                                         source: "codex", sessionID: "current-session", muxID: host.muxID)
+        let key = ssh.deviceKey
+        // Reproduce the old client selecting the helper's unusable recorded
+        // location despite also supplying the live pane.
+        let old = try JSONSerialization.data(withJSONObject: ["source": "codex", "sessionId": target.sessionID,
+                                                             "pane": target.paneID, "tab": target.tabID, "text": "Old request"])
+        do {
+            _ = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: "/v1/prompt", body: old))
+            XCTFail("Recorded terminal must reject")
+        } catch {
+            XCTAssertEqual(error as? LiveConnectionError, .gatewayRejection(status: 422, reason: "prompt target does not support text input"))
+        }
+        try await MoshiConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: target, text: "Keep it up")
+        XCTAssertEqual(helper.messages, ["Keep it up"])
+        XCTAssertEqual(helper.promptCount, 2)
+
+        let changed = try AgentChatTarget(hostID: host.id, workspaceID: "w1", tabID: "w1:t1", paneID: "w1:p1",
+                                          source: "codex", sessionID: "previous-session", muxID: host.muxID)
+        do {
+            try await MoshiConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: changed, text: "Must not arrive")
+            XCTFail("Changed conversation must reject before input")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+        XCTAssertEqual(helper.promptCount, 2)
+
+        // A rejected live-pane request is also a single attempt. There is no
+        // alternate target or automatic replay on any delivery error.
+        do {
+            try await MoshiConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: target, text: "Reject this")
+            XCTFail("Expected live-pane rejection")
+        } catch { XCTAssertEqual(error as? LiveConnectionError, .gatewayRejection(status: 422, reason: "target pane not found")) }
+        XCTAssertEqual(helper.promptCount, 3)
+        XCTAssertEqual(helper.messages, ["Keep it up"])
+        try await ssh.close(); try await helper.channel.close()
+    }
+
+    func testErrorBodiesAreBoundedAndOnlyPlainJSONReasonsAreDisplayed() throws {
+        for (body, expected) in [
+            (Data(#"{"error":"target\npane\u0000 not found"}"#.utf8), LiveConnectionError.gatewayRejection(status: 422, reason: "target pane not found")),
+            (Data("<html>upstream error</html>".utf8), .response(422)),
+            (try JSONSerialization.data(withJSONObject: ["error": String(repeating: "x", count: 400)]), .gatewayRejection(status: 422, reason: String(repeating: "x", count: 320))),
+            (Data(repeating: 65, count: 32_769), .oversized),
+        ] {
+            let loop = EmbeddedEventLoop()
+            let promise = loop.makePromise(of: Data.self)
+            let exchange = Exchange(result: promise)
+            let channel = EmbeddedChannel(handler: GatewayResponse(exchange: exchange), loop: loop)
+            try channel.writeInbound(HTTPClientResponsePart.head(.init(version: .http1_1, status: .unprocessableEntity)))
+            let half = body.count / 2
+            try channel.writeInbound(HTTPClientResponsePart.body(ByteBuffer(bytes: body.prefix(half))))
+            try channel.writeInbound(HTTPClientResponsePart.body(ByteBuffer(bytes: body.dropFirst(half))))
+            try channel.writeInbound(HTTPClientResponsePart.end(nil))
+            XCTAssertThrowsError(try promise.futureResult.wait()) { XCTAssertEqual($0 as? LiveConnectionError, expected) }
+            _ = try channel.finish()
+        }
+    }
+}
+
+/// No real agent is involved. The recorded-session route fails like an
+/// unusable terminal record; the live route requires the exact named server.
+private final class DeliveryHelper: @unchecked Sendable {
+    var channel: Channel!
+    private let lock = NSLock()
+    private var accepted: [String] = []
+    private var count = 0
+    var messages: [String] { lock.lock(); defer { lock.unlock() }; return accepted }
+    var promptCount: Int { lock.lock(); defer { lock.unlock() }; return count }
+    func response(path: String, body: Data) -> (HTTPResponseStatus, Data) {
+        lock.lock(); defer { lock.unlock() }
+        let parts = URLComponents(string: path)!
+        let query = Dictionary(uniqueKeysWithValues: (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        var status = HTTPResponseStatus.ok
+        var value: [String: Any] = [:]
+        if parts.path == "/v1/workspaces/panes" && query == ["mux": "herdr:phone-test", "groupId": "w1", "childId": "w1:t1"] {
+            value = ["kind": "herdr", "groupId": "w1", "childId": "w1:t1", "panes": [
+                ["id": "w1:p1", "label": "codex", "agent": "codex", "agentStatus": "working", "sessionId": "current-session"]]]
+        } else if parts.path == "/v1/prompt" {
+            count += 1
+            let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: String] ?? [:]
+            if request["sessionId"] != nil {
+                status = .unprocessableEntity; value = ["error": "prompt target does not support text input"]
+            } else if query != ["mux": "herdr:phone-test"] || request["pane"] != "w1:p1" || request["source"] != "codex" || request["tab"] != nil {
+                status = .conflict; value = ["error": "wrong destination"]
+            } else if request["text"] == "Reject this" {
+                status = .unprocessableEntity; value = ["error": "target pane not found"]
+            } else {
+                accepted.append(request["text"] ?? ""); value = ["ok": true]
+            }
+        } else { status = .notFound; value = ["error": "unknown route"] }
+        return (status, try! JSONSerialization.data(withJSONObject: value))
+    }
+    static func start() async throws -> DeliveryHelper {
+        let helper = DeliveryHelper()
+        helper.channel = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
+            channel.pipeline.configureHTTPServerPipeline().flatMap { channel.pipeline.addHandler(DeliveryHandler(helper: helper)) }
+        }.bind(host: "127.0.0.1", port: 0).get()
+        return helper
+    }
+}
+private final class DeliveryHandler: ChannelInboundHandler {
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
+    let helper: DeliveryHelper
+    var path = "", body = Data()
+    init(helper: DeliveryHelper) { self.helper = helper }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        switch unwrapInboundIn(data) {
+        case .head(let head): path = head.uri
+        case .body(let bytes): body.append(contentsOf: bytes.readableBytesView)
+        case .end:
+            let (status, data) = helper.response(path: path, body: body)
+            let head = HTTPResponseHead(version: .http1_1, status: status, headers: HTTPHeaders([
+                ("Content-Type", "application/json"), ("Content-Length", String(data.count)), ("Connection", "close")]))
+            context.write(wrapOutboundOut(.head(head)), promise: nil)
+            context.write(wrapOutboundOut(.body(.byteBuffer(ByteBuffer(bytes: data)))), promise: nil)
+            context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+        }
+    }
+}
