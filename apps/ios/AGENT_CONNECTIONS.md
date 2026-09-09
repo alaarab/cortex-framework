@@ -15,7 +15,8 @@ exposes workspace and pane discovery, live transcripts, earlier history,
 attachments, exact-session prompt delivery, and interrupting the current turn.
 Native terminal input is carried by the helper's Herdr PTY route. Web previews
 use separate pinned SSH connections forwarding only to a discovered HTTP(S)
-server's loopback address and port. Phren exposes no SSH exec channel.
+server's loopback address and port. A separate restricted SSH exec channel reads
+only token counters and lifecycle events for the selected conversation.
 
 The endpoint was observed on installed `moshi-hook 0.3.19`, which returns
 `kind`, `capabilities`, and workspace `groups` with tab `children`. Tab metadata
@@ -52,7 +53,7 @@ IDs on two computers, verify the host label and reply isolation, and cover searc
 offline rows, empty state, and returning from the background.
 
 The exported SSH authorization line restricts forwarding to IPv4/IPv6 localhost and
-disables shell commands. The hook itself offers more capabilities than status;
+forces a counters-only reader, which rejects shell commands. The hook itself offers more capabilities than status;
 this authorization is not a server-side read-only credential scope. The chat
 client uses `/v1/prompt` for deliberate replies and `/v1/keys` only for Escape
 to interrupt a working turn. The native terminal carries deliberate keyboard input. Approval/question endpoints revalidate the pane tuple and use the exact helper-verified action/prompt identity. Workspace/tab closure requires an explicit confirmation because it stops processes.
@@ -116,6 +117,13 @@ The observed `moshi-hook 0.3.19` contract is:
   and returns a `backlog` frame containing numbered raw JSONL entries, followed
   by `append` frames as the transcript changes. The helper emits transcript
   records, so this is not a guarantee of token-by-token generation.
+  New assistant entries and prefix extensions reveal progressively in the UI;
+  the canonical transcript retains the entire received text for copy/share.
+  A bounded queue advances at 30 Hz only while visible, catching long bursts up
+  within about 2.5 seconds. It never manufactures text before a transcript
+  entry arrives. Initial history, older pages, reconnects, Reduce Motion, and
+  VoiceOver show received content immediately. Auto-follow updates during the
+  reveal only while the reader is at the bottom.
 - A WebSocket message `{type: "older", beforeLine, limit: 200}` returns an
   `older` frame. Phren uses a short separate connection for each earlier page,
   merges by absolute line/block identity, and retains pages on reconnect.
@@ -128,6 +136,37 @@ The observed `moshi-hook 0.3.19` contract is:
   the loopback SSH forward and returns `{ok: true}` when accepted. Phren sends
   one explicit pane, without `sessionId` or a tab/focus fallback. This
   acknowledges delivery, not agent completion.
+
+Codex `task_started`, `task_complete`, and abort events drive turn progress and
+reported start times. The selected pane/status stream supplies live activity
+for both agents, including approvals and questions. Sending starts a local
+waiting indicator; it is cleared by new work/output or a delivery failure,
+without replaying the prompt. Codex `token_count.info.last_token_usage` and
+Claude assistant `message.usage` supply the latest response's token counts.
+Unknown counters are omitted. Absolute line cursors ignore older pages and
+duplicate status/usage records, and transcript replacement resets progress.
+Counts are never synthesized from text or animated into a fake token rate.
+
+The installed helper omits empty `entries` arrays and filters Codex lifecycle and
+usage events from `/v1/transcripts`. Empty snapshots are accepted. A separate,
+foreground-only SSH exec channel runs the installed fixed `chat-progress.py`
+reader to obtain the missing records. `enable-chat-progress.py` installs it and
+migrates only old restricted Phren-labelled keys with a backup. The forced command
+accepts only `phren-chat-progress <provider> <UUID>`; arbitrary commands remain
+disabled. It selects one exact session file, rejects ambiguous paths, validates
+Codex session metadata, excludes Claude sidechains, and emits only allowed
+counters/timestamps/state fields. It never emits transcript messages or reasoning.
+Reads use 1 MB line and 512 MB file bounds, retain at most 32 progress records,
+poll appended complete rows once a second, reset after truncation/replacement,
+and exit on SSH stdin EOF. No agent input, installation daemon, or file writes
+occur during a read. Missing Python/reader/permission/transcript leaves chat usable
+and displays token setup access. Transcript-carried usage remains a fallback.
+
+Validation includes parser/reveal tests, the complete waiting-to-finished simulator
+flow, real helper text plus counters over pinned SSH, and restricted macOS SSH
+authorization. `python3 apps/ios/scripts/test-chat-progress.py` covers content
+filtering, split writes, truncation, session isolation, rejected commands, key
+migration, Claude usage, and reader exit after disconnect.
 
 The visible chat maintains a live WebSocket and checks pane identity/status every
 three seconds. The initial connection deadline is 20 seconds; explicit POSTs

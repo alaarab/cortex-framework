@@ -92,6 +92,7 @@ struct GatewayRequest: Sendable {
     var beforeLine: Int?
     var initialMessages: [Data] = []
     var terminalSocket: HerdrTerminalSocket?
+    var progressCommand: String?
     static let workspaces = Self(path: "/v1/workspaces")
     static func panes(_ workspace: String, _ tab: String) -> Self {
         Self(path: path("/v1/workspaces/panes", ["groupId": workspace, "childId": tab]))

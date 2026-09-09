@@ -10,6 +10,8 @@ public struct AgentApproval: Decodable, Equatable, Sendable, Identifiable {
 
 public struct AgentInteractionStatus: Equatable, Sendable {
     public let approval: AgentApproval?
+    public var activity: String? = nil
+    public var modelName: String? = nil
     public static func read(_ data: Data, target: AgentChatTarget) throws -> Self? {
         guard data.count <= 1_048_576 else { throw PhrenKitError.validation("Agent status is too large.") }
         guard let frame = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -25,7 +27,9 @@ public struct AgentInteractionStatus: Equatable, Sendable {
             }
             approval = candidate
         }
-        return .init(approval: approval)
+        let activity = status["status"] as? String
+        return .init(approval: approval, activity: ["working", "idle", "done", "waiting", "blocked", "error"].contains(activity ?? "") ? activity : nil,
+                     modelName: (status["modelName"] as? String).map { String($0.prefix(100)) })
     }
 }
 

@@ -35,6 +35,8 @@ struct LiveHostEditor: View {
             Section("Authorize this iPhone") {
                 Text("Create a device key, then add the copied line to ~/.ssh/authorized_keys for this user on the computer. The line allows forwarding to this computer’s localhost for the agent helper and web previews. For an older connection, replace its existing phren-iphone line with this one.")
                     .font(.callout).foregroundStyle(.secondary)
+                Link("Set up live token counts on this computer", destination: URL(string: "https://github.com/alaarab/phren/blob/main/apps/ios/README.md#live-token-counts")!)
+                    .font(.callout)
                 if key.isEmpty {
                     Button("Create device key") { createKey() }
                 } else {

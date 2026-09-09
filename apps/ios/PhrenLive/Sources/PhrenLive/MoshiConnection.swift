@@ -158,6 +158,12 @@ private final class GatewayChannel: ChannelInboundHandler {
             let ssh = try context.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
             let child = context.eventLoop.makePromise(of: Channel.self)
             child.futureResult.whenFailure { [exchange] in exchange.finish(.failure($0)) }
+            if let command = request.progressCommand {
+                ssh.createChannel(child, channelType: .session) { [exchange] channel, _ in
+                    channel.pipeline.addHandler(ChatProgressFrames(exchange: exchange, command: command))
+                }
+                return
+            }
             let target = SSHChannelType.DirectTCPIP(targetHost: "127.0.0.1", targetPort: 24543,
                 originatorAddress: try SocketAddress(ipAddress: "127.0.0.1", port: 0))
             ssh.createChannel(child, channelType: .directTCPIP(target)) { [exchange, request] channel, type in

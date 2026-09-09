@@ -288,6 +288,14 @@ after checking that it still contains the chosen conversation. A rejected send
 shows the computer's error reason; a lost connection shows **Reconnect** beside
 the composer without submitting your draft.
 
+New assistant text appears progressively as transcript updates arrive, with
+waiting, working, receiving, and finished indicators. The token button shows
+the latest model response's reported input/output counts; tap for cached input
+and model details when supplied. These are provider counts, not word estimates.
+The hook can buffer complete transcript chunks, so Phren cannot display words
+before the host publishes them. History and reconnect snapshots appear
+immediately; Reduce Motion and VoiceOver also disable the reveal animation.
+
 **Herdr workspaces & terminal** on a computer opens native workspace, tab and pane navigation. Choose a named server, create a workspace in a folder, add tabs/panes, rename or close workspaces/tabs, and use the terminal without leaving Phren. Closing a workspace or tab asks before stopping its processes.
 
 Open Herdr from the computer's terminal toolbar button. Session rows open chat;
@@ -421,6 +429,29 @@ The private Ed25519 key lives in this device's Keychain, separately from GitHub
 credentials. **Connection settings → Forget computer** removes it and the
 local directory mappings; remove the public authorization line on the host to
 revoke access there too.
+
+### Live token counts
+
+Run once from a Phren checkout, as the SSH user on each computer:
+
+```sh
+python3 apps/ios/scripts/enable-chat-progress.py
+```
+
+This installs `~/.local/share/phren/chat-progress.py` and upgrades existing
+Phren-labelled device keys, backing up `authorized_keys`. It retains the loopback
+forwarding restrictions and replaces the deny-all command with a fixed reader
+that accepts only `phren-chat-progress <codex|claude> <session UUID>`. It rejects
+shell commands and reads only that conversation's counters and lifecycle records.
+Python 3 and standard Codex/Claude transcript directories (or `CODEX_HOME` /
+`CLAUDE_CONFIG_DIR` available to SSH) are required. No daemon or agent restart.
+
+Reopen chat after setup. New device authorization lines already name this reader;
+install it before expecting counters. If unavailable, chat and helper status
+continue working, with a small **Tokens unavailable** setup link. The installed
+Moshi helper filters Codex usage/lifecycle rows from its transcript socket, so
+these counts need the supplemental reader. Token totals update when the provider
+records usage, not for each word appearing on screen.
 
 The screen fetches `GET /v1/workspaces` through an authenticated SSH channel
 to `127.0.0.1:24543`, every ten seconds while visible and active. Requests have

@@ -21,7 +21,7 @@ let package = Package(
             .product(name: "NIOWebSocket", package: "swift-nio"),
             .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
             .product(name: "Crypto", package: "swift-crypto"),
-        ]),
+        ], resources: [.copy("Resources/chat-progress.py")]),
         .testTarget(name: "PhrenLiveTests", dependencies: [
             "PhrenLive", .product(name: "NIOEmbedded", package: "swift-nio")
         ]),

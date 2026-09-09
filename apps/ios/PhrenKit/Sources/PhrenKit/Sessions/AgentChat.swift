@@ -92,20 +92,26 @@ public struct AgentChatTranscript: Equatable, Sendable {
     public let totalLines: Int
     public let startLine: Int?
     public var questionEvents: [AgentQuestionEvent] = []
+    public var progressEvents: [AgentChatProgressEvent] = []
 
     public static func read(_ data: Data, source: String) throws -> Self {
         guard ["codex", "claude"].contains(source), data.count <= 8_388_608,
               let frame = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let kind = Kind(rawValue: frame["type"] as? String ?? ""), frame["source"] as? String == source,
-              let entries = frame["entries"] as? [[String: Any]], entries.count <= 2_000 else {
+              frame["entries"] == nil || frame["entries"] is [[String: Any]] else {
             throw PhrenKitError.validation("The computer returned an unsupported chat transcript.")
         }
+        // The helper omits entries when a new conversation has only metadata.
+        let entries = frame["entries"] as? [[String: Any]] ?? []
+        guard entries.count <= 2_000 else { throw PhrenKitError.validation("The chat transcript is too large.") }
         var messages: [AgentChatMessage] = []
         var questionEvents: [AgentQuestionEvent] = []
+        var progressEvents: [AgentChatProgressEvent] = []
         var seen: Set<String> = []
         for entry in entries {
             guard let line = entry["line"] as? Int, line >= 0, let raw = entry["raw"] as? [String: Any] else { continue }
             questionEvents += AgentQuestionEvent.read(raw, source: source)
+            if let event = AgentChatProgressEvent.read(raw, source: source, line: line) { progressEvents.append(event) }
             let parts = source == "codex" ? codex(raw) : claude(raw)
             for (index, part) in parts.enumerated() {
                 let id = "\(line):\(index)"
@@ -116,7 +122,8 @@ public struct AgentChatTranscript: Equatable, Sendable {
         }
         return Self(kind: kind, messages: messages.sorted { $0.line < $1.line }, hasMore: frame["hasMore"] as? Bool ?? false,
                     totalLines: frame["totalLines"] as? Int ?? 0,
-                    startLine: frame["startLine"] as? Int ?? entries.compactMap { $0["line"] as? Int }.min(), questionEvents: questionEvents)
+                    startLine: frame["startLine"] as? Int ?? entries.compactMap { $0["line"] as? Int }.min(), questionEvents: questionEvents,
+                    progressEvents: progressEvents)
     }
 
     private struct Part { let role: AgentChatMessage.Role; var title: String? = nil; let text: String; var imageBlocks: [Int] = [] }

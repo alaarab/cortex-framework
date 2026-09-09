@@ -2,6 +2,35 @@ import XCTest
 
 final class AgentChatTests: XCTestCase {
     @MainActor
+    func testWaitingProgressTokenUsageAndFinishedReply() {
+        let app = launch(extra: ["--chat-streaming"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["Ready to stream a reply."].waitForExistence(timeout: 5))
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Show me the reply")
+        app.buttons["chat-send"].tap()
+        let activity = app.staticTexts["chat-activity"]
+        XCTAssertTrue(app.staticTexts["Waiting for agent…"].waitForExistence(timeout: 3))
+        capture(app, "Waiting for the agent to respond")
+        XCTAssertTrue(app.buttons["chat-token-usage"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Receiving reply…"].waitForExistence(timeout: 8))
+        let growing = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "The reply is arriving word by word.")).firstMatch
+        XCTAssertTrue(growing.exists)
+        let partialCount = growing.label.count
+        capture(app, "Reply appearing progressively")
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Finished"), object: activity)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 15), .completed)
+        XCTAssertTrue(app.buttons["chat-token-usage"].label.contains("85 output tokens"))
+        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "The reply is arriving word by word.")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertTrue(reply.label.hasSuffix("conversation. "))
+        XCTAssertGreaterThan(reply.label.count, partialCount, "The reply should grow after its first visible words")
+        capture(app, "Completed streamed reply and reported tokens")
+        app.buttons["chat-token-usage"].tap()
+        XCTAssertTrue(app.buttons["Latest reported model response"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testHerdrWorkspaceBrowserAndNamedServerSelection() {
         let app = launch()
         app.buttons["Herdr workspaces & terminal"].tap()

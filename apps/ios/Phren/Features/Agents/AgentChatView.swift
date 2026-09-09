@@ -40,6 +40,8 @@ struct AgentChatView: View {
     let session: DiscoveredMoshiSession
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
     @State private var model = AgentChatModel()
     @State private var sendTask: Task<Void, Never>?
@@ -120,7 +122,7 @@ struct AgentChatView: View {
                             Text("Showing the most recent loaded history to keep this chat responsive.").font(.caption).foregroundStyle(PhrenTheme.textDim)
                         }
                         ForEach(model.messages) { message in
-                            ChatMessageRow(message: message, images: model.sentImages.filter { item in
+                            ChatMessageRow(message: message, revealedText: model.reveal.visible[message.id], images: model.sentImages.filter { item in
                                 message.role == .user && item.path.map { message.text.contains($0) } == true
                             }, preview: { previewImage = $0 }, historical: {
                                 if let target = model.target {
@@ -165,6 +167,9 @@ struct AgentChatView: View {
                 .onChange(of: model.messages.last?.id) { _, _ in
                     if atBottom { withAnimation { proxy.scrollTo("chat-bottom", anchor: .bottom) } }
                 }
+                .onChange(of: model.reveal.revision) { _, _ in
+                    if atBottom { proxy.scrollTo("chat-bottom", anchor: .bottom) }
+                }
             }
             composer
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
@@ -208,6 +213,17 @@ struct AgentChatView: View {
         .onDisappear { visible = false; sendTask?.cancel(); historyTask?.cancel() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { sendTask?.cancel(); historyTask?.cancel() } }
         .onChange(of: currentHost) { _, _ in sendTask?.cancel(); historyTask?.cancel() }
+        .onChange(of: reduceMotion || voiceOver, initial: true) { _, instant in
+            model.animateReplies = !instant
+            if instant { model.reveal.finish() }
+        }
+        .task(id: active && model.reveal.isRevealing) {
+            guard active else { return }
+            while model.reveal.isRevealing && !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(33)) } catch { return }
+                model.reveal.advance()
+            }
+        }
         .sheet(isPresented: $showingAttachments) {
             if let openingTarget = model.target {
                 ChatAttachmentPicker(canAdd: model.attachments.count < 4, add: { item in
@@ -283,12 +299,35 @@ struct AgentChatView: View {
                     Button("Reconnect") { refresh = UUID() }
                         .font(.caption.weight(.semibold)).accessibilityIdentifier("chat-reconnect")
                 }.foregroundStyle(PhrenTheme.warning)
-            } else if selectedPane?.agentStatus == "working", !model.needsAnswer {
+            } else if model.connected {
                 HStack {
-                    Label("Agent is working", systemImage: "waveform").font(.caption).foregroundStyle(PhrenTheme.cyan)
+                    ChatActivityIndicator(waiting: model.awaitingReply, revealing: model.reveal.isRevealing,
+                                          needsAnswer: model.needsAnswer || model.approval != nil,
+                                          working: selectedPane?.agentStatus == "working" || (model.interactionConnected && model.liveActivity == "working"),
+                                          progress: model.progress, sentAt: model.sentAt)
                     Spacer()
-                    Button("Stop", systemImage: "stop.circle") { sendTask = Task { await model.stop(session) } }
-                        .disabled(!active || !model.connected || model.sending || model.stopping).accessibilityIdentifier("chat-stop")
+                    if selectedPane?.agentStatus == "working", !model.needsAnswer {
+                        Button("Stop", systemImage: "stop.circle") { sendTask = Task { await model.stop(session) } }
+                            .disabled(!active || !model.connected || model.sending || model.stopping).accessibilityIdentifier("chat-stop")
+                    }
+                }
+            }
+            if let usage = model.progress.usage {
+                Menu {
+                    Text("Latest reported model response")
+                    Text("Input: \(usage.input.formatted()) tokens")
+                    Text("Output: \(usage.output.formatted()) tokens")
+                    if let cached = usage.cachedInput { Text("Cached input: \(cached.formatted()) tokens") }
+                    if let modelName = model.modelName { Text(modelName) }
+                } label: {
+                    Text("\(usage.output.formatted()) tokens out · \(usage.input.formatted()) in")
+                        .font(.caption2.monospacedDigit()).foregroundStyle(PhrenTheme.textMuted)
+                }.accessibilityIdentifier("chat-token-usage").accessibilityLabel("Latest reported usage: \(usage.output) output tokens, \(usage.input) input tokens")
+            } else if model.progressUnavailable {
+                Menu {
+                    Link("Set up token counts on this computer", destination: URL(string: "https://github.com/alaarab/phren/blob/main/apps/ios/README.md#live-token-counts")!)
+                } label: {
+                    Text("Tokens unavailable").font(.caption2).foregroundStyle(PhrenTheme.textMuted)
                 }
             }
             if model.needsAnswer {
@@ -343,10 +382,12 @@ private struct ChatBottomPosition: PreferenceKey {
 
 private struct ChatMessageRow<Historical: View>: View {
     let message: AgentChatMessage
+    var revealedText: String? = nil
     let images: [ChatAttachmentDraft]
     let preview: (ChatAttachmentDraft) -> Void
     @ViewBuilder let historical: () -> Historical
     private var displayText: String {
+        if let revealedText { return revealedText }
         let marker = "\n\nAttached files on this computer:\n"
         guard !images.isEmpty, let section = message.text.range(of: marker, options: .backwards) else { return message.text }
         let paths = message.text[section.upperBound...].components(separatedBy: "\n")
@@ -380,6 +421,9 @@ private struct ChatMessageRow<Historical: View>: View {
                     }
                     historical()
                     if !displayText.isEmpty && !(displayText == "[Image attachment]" && !message.imageBlocks.isEmpty) { ChatRichText(text: displayText) }
+                    if revealedText != nil {
+                        Capsule().fill(PhrenTheme.cyan).frame(width: 5, height: 14).accessibilityHidden(true)
+                    }
                 }
                 .padding(14)
                 .background(message.role == .user ? PhrenTheme.cyan.opacity(0.10) : PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 18))

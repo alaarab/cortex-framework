@@ -11,6 +11,9 @@ import UIKit
     static var reads = 0
     static var hasReadTranscript = false
     static var sendAttempts = 0
+    static var streamStarts: [String: Date] = [:]
+    static var streamed: Set<String> = []
+    static let streamingReply = "The reply is arriving word by word. " + String(repeating: "You can follow the changes as they arrive without losing your place in the conversation. ", count: 8)
     static var stopped = false
     static var answered = false
     static func approval(_ target: AgentChatTarget) throws -> AgentApproval? {
@@ -46,6 +49,7 @@ import UIKit
     }
     static func transcript(_ target: AgentChatTarget) throws -> AgentChatTranscript {
         hasReadTranscript = true
+        if flag("--chat-streaming") { return try streamingTranscript(target) }
         var entries: [[String: Any]] = []
         func append(_ role: String, _ text: String) {
             let raw: [String: Any] = target.source == "codex"
@@ -82,6 +86,33 @@ import UIKit
         }
         if flag("--chat-send-fails") { throw LiveConnectionError.disconnected }
         sent.append((target.id, text))
+        if flag("--chat-streaming") { streamStarts[target.id] = .now }
+    }
+    private static func streamingTranscript(_ target: AgentChatTarget) throws -> AgentChatTranscript {
+        let kind = streamed.insert(target.id).inserted ? "backlog" : "append"
+        var entries: [[String: Any]] = []
+        func message(_ line: Int, _ role: String, _ text: String) {
+            entries.append(["line": line, "raw": ["type": "response_item", "payload": ["type": "message", "role": role, "content": text]]])
+        }
+        func event(_ line: Int, _ fields: [String: Any]) {
+            entries.append(["line": line, "raw": ["type": "event_msg", "payload": fields]])
+        }
+        message(0, "assistant", "Ready to stream a reply.")
+        if let start = streamStarts[target.id], let text = sent.last(where: { $0.0 == target.id })?.1 {
+            let elapsed = Date.now.timeIntervalSince(start)
+            message(1, "user", text)
+            if elapsed >= 2 {
+                event(2, ["type": "task_started", "started_at": start.timeIntervalSince1970])
+                event(3, ["type": "token_count", "info": ["last_token_usage": ["input_tokens": 128, "output_tokens": 0]]])
+            }
+            if elapsed >= 5 {
+                message(4, "assistant", streamingReply)
+                event(5, ["type": "token_count", "info": ["last_token_usage": ["input_tokens": 128, "output_tokens": 85]]])
+            }
+            if elapsed >= 9 { event(6, ["type": "task_complete", "completed_at": start.addingTimeInterval(9).timeIntervalSince1970]) }
+        }
+        return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": kind, "source": target.source,
+            "entries": entries, "startLine": 0, "totalLines": entries.count, "hasMore": false]), source: target.source)
     }
     private static func flag(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains(flag) }
 }

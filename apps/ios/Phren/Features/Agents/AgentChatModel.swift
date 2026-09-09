@@ -29,6 +29,16 @@ final class AgentChatModel {
     var panes: [AgentChatPanes.Pane] = []
     var target: AgentChatTarget?
     var history = AgentChatHistory()
+    var progress = AgentChatProgress()
+    let reveal = ChatTextReveal()
+    var animateReplies = true
+    private var hasTranscript = false
+    private(set) var awaitingReply = false
+    private(set) var sentAt: Date?
+    private var submittedAfterLine = -1
+    var liveActivity: String?
+    var modelName: String?
+    var progressUnavailable = false
     var messages: [AgentChatMessage] { history.messages }
     var hasMore: Bool { history.hasMore }
     var error: String?
@@ -45,6 +55,8 @@ final class AgentChatModel {
     var answering = false
     private var answeredQuestions: Set<String> = []
     private var statusTask: Task<Void, Never>?
+    private var progressTask: Task<Void, Never>?
+    private var progressConnected = false
     private var statusGeneration = UUID()
     var receivedAt: Date?
     var deliveryStatus: String?
@@ -69,7 +81,9 @@ final class AgentChatModel {
             catch { draftStorageError = error.localizedDescription }
             draft = AgentChatDrafts.text[chosen.id] ?? saved.text
             attachments = AgentChatDrafts.attachments[chosen.id] ?? saved.attachments.map { .init(attachment: $0) }
-            history = .init(); connected = false; error = nil; deliveryError = nil
+            history = .init(); progress = .init(); reveal.finish(); hasTranscript = false
+            awaitingReply = false; sentAt = nil; liveActivity = nil; modelName = nil
+            connected = false; error = nil; deliveryError = nil
             sentImages = []; needsAnswer = false; approval = nil; question = nil; answeredQuestions = []
         } catch { self.error = error.localizedDescription }
     }
@@ -81,9 +95,11 @@ final class AgentChatModel {
         } catch { draftStorageError = error.localizedDescription }
     }
     func chooseAnother() {
+        progressTask?.cancel(); progressTask = nil
         streamTask?.cancel(); streamTask = nil; streamTarget = nil
         statusTask?.cancel(); statusTask = nil; interactionConnected = false; approval = nil
         target = nil; history = .init(); connected = false
+        progress = .init(); reveal.finish(); hasTranscript = false; awaitingReply = false; sentAt = nil; liveActivity = nil; modelName = nil
         draft = ""; attachments = []; sentImages = []; deliveryError = nil; needsAnswer = false
     }
     func add(_ attachment: AgentAttachment) {
@@ -95,9 +111,11 @@ final class AgentChatModel {
         let run = UUID(); generation = run; loading = true
         defer {
             if generation == run {
+                progressTask?.cancel(); progressTask = nil
                 streamTask?.cancel(); streamTask = nil; streamTarget = nil
                 statusTask?.cancel(); statusTask = nil; interactionConnected = false; approval = nil
                 connected = false; loading = false
+                reveal.finish()
             }
         }
         while !Task.isCancelled {
@@ -112,11 +130,13 @@ final class AgentChatModel {
                 }
                 if let target {
                     needsAnswer = try list.validate(target).needsAnswer || approval != nil
+                    if needsAnswer { awaitingReply = false }
                     if streamTarget != target { beginStream(session, target: target, run: run) }
                 }
                 loading = false
             } catch {
                 guard !Task.isCancelled, generation == run else { return }
+                progressTask?.cancel(); progressTask = nil
                 streamTask?.cancel(); streamTask = nil; streamTarget = nil
                 statusTask?.cancel(); statusTask = nil; interactionConnected = false; approval = nil
                 connected = false; loading = false; self.error = error.localizedDescription
@@ -128,6 +148,7 @@ final class AgentChatModel {
     private func beginStream(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
         streamTask?.cancel(); streamTarget = target
         beginStatus(session, target: target, run: run)
+        beginProgress(session, target: target, run: run)
         streamTask = Task {
             do {
                 #if DEBUG && targetEnvironment(simulator)
@@ -152,7 +173,7 @@ final class AgentChatModel {
             }
         }
     }
-    private func accept(_ frame: AgentChatTranscript) {
+    func accept(_ frame: AgentChatTranscript) {
         if frame.kind == .backlog { question = nil }
         for event in frame.questionEvents {
             switch event {
@@ -160,7 +181,41 @@ final class AgentChatModel {
             case .resolved(let id): if question?.id == id { question = nil }
             }
         }
-        history.receive(frame); connected = true; receivedAt = .now; error = nil; loading = false
+        reveal.receive(frame, previous: messages, animated: animateReplies && hasTranscript)
+        if frame.messages.contains(where: { $0.line > submittedAfterLine && $0.role != .user }) { awaitingReply = false }
+        if !progressConnected, !frame.progressEvents.isEmpty { acceptProgress(frame) }
+        history.receive(frame); hasTranscript = true; connected = true; receivedAt = .now; error = nil; loading = false
+    }
+
+    func acceptProgress(_ frame: AgentChatTranscript) {
+        progress.receive(frame)
+        if frame.progressEvents.contains(where: { event in
+            guard event.line > submittedAfterLine else { return false }
+            switch event.value { case .started, .finished, .stopped: return true; default: return false }
+        }) { awaitingReply = false }
+    }
+
+    private func beginProgress(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
+        progressTask?.cancel(); progressConnected = false; progressUnavailable = false
+        progressTask = Task {
+            #if DEBUG && targetEnvironment(simulator)
+            if AgentChatFixture.enabled { return }
+            #endif
+            do {
+                for try await frame in MoshiConnection.chatProgress(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target) {
+                    try Task.checkCancellation()
+                    guard self.target == target, generation == run else { return }
+                    progressConnected = true
+                    acceptProgress(frame)
+                }
+            } catch {
+                // Counters are supplemental. Unsupported hosts keep live chat,
+                // helper status, and drafts; no estimated usage is substituted.
+                if !Task.isCancelled, self.target == target, generation == run {
+                    progressConnected = false; progressUnavailable = true
+                }
+            }
+        }
     }
 
     private func beginStatus(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
@@ -179,7 +234,9 @@ final class AgentChatModel {
                     for try await status in MoshiConnection.interactionUpdates(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target) {
                         try Task.checkCancellation()
                         guard self.target == target, generation == run, statusGeneration == statusRun else { return }
-                        approval = status.approval; interactionConnected = true
+                        if awaitingReply, liveActivity != "working", status.activity == "working" { awaitingReply = false }
+                        approval = status.approval; liveActivity = status.activity; modelName = status.modelName; interactionConnected = true
+                        if approval != nil || ["waiting", "blocked"].contains(status.activity ?? "") { awaitingReply = false }
                     }
                 } catch {}
                 guard !Task.isCancelled, self.target == target, generation == run, statusGeneration == statusRun else { return }
@@ -279,6 +336,8 @@ final class AgentChatModel {
         let paths = sent.compactMap { $0.path }.joined(separator: "\n")
         let text = paths.isEmpty ? submitted : submitted + "\n\nAttached files on this computer:\n" + paths
         deliveryStatus = "Sending…"
+        submittedAfterLine = max(0, history.totalLines) - 1
+        sentAt = .now; awaitingReply = true
         do {
             #if DEBUG && targetEnvironment(simulator)
             if AgentChatFixture.enabled { try await AgentChatFixture.send(target, text: text) }
@@ -294,6 +353,7 @@ final class AgentChatModel {
             if sentImages.count > 16 { sentImages.removeFirst(sentImages.count - 16) }
             attachments.removeAll { submittedIDs.contains($0.id) }
         } catch {
+            awaitingReply = false
             deliveryError = "Delivery wasn't confirmed. Check the conversation before trying again. \(error.localizedDescription)"
         }
     }

@@ -48,7 +48,7 @@ public enum DeviceSSHKey {
 
     static func authorizedKey(privateKey: Curve25519.Signing.PrivateKey) -> String {
         let publicKey = String(openSSHPublicKey: NIOSSHPrivateKey(ed25519Key: privateKey).publicKey)
-        return "restrict,port-forwarding,permitopen=\"127.0.0.1:*\",permitopen=\"[::1]:*\",command=\"/usr/bin/false\" \(publicKey) phren-iphone"
+        return "restrict,port-forwarding,permitopen=\"127.0.0.1:*\",permitopen=\"[::1]:*\",command=\"python3 ~/.local/share/phren/chat-progress.py\" \(publicKey) phren-iphone"
     }
 
     public static func delete(_ id: UUID) throws {

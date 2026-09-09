@@ -1,6 +1,6 @@
 # Native chat feature review
 
-Reviewed September 8, 2026 against Moshi's public documentation and the installed
+Reviewed September 9, 2026 against Moshi's public documentation and the installed
 `moshi-hook 0.3.19` protocol. This tracks Phren's implementation; it does not claim
 complete Moshi parity. Native SwiftUI code uses the existing helper through the
 configured computer's pinned SSH connection. Moshi on the iPhone is optional.
@@ -10,7 +10,8 @@ configured computer's pinned SSH connection. Moshi on the iPhone is optional.
 | Capability | Phren behavior | Reference |
 | --- | --- | --- |
 | Existing agent conversation | Exact computer/workspace/tab/pane/provider/session selection; Codex and Claude Code | [Chat View](https://getmoshi.app/docs/chat-view) |
-| Live replies | Foreground WebSocket backlog and append frames; reconnect without resending drafts | [Gateway](https://getmoshi.app/docs/debug-gateway) |
+| Live replies | Foreground WebSocket updates; progressively reveal new words, show waiting/working/finished states, preserve scroll position and drafts on reconnect | [Gateway](https://getmoshi.app/docs/debug-gateway) |
+| Response token counts | Actual provider-reported input/output/cache counts through a restricted SSH reader; updated when recorded by the provider | Phren feature; [setup](README.md#live-token-counts) |
 | Earlier history | Load earlier numbered pages; keep loaded pages on reconnect, with memory bounds | [Chat debugging](https://getmoshi.app/docs/debug-chat-view) |
 | Image and file attachments | Photos, camera, Files, and explicit clipboard paste; preview/remove, upload on Send, preserve failed drafts | [Image paste](https://getmoshi.app/docs/image-paste) |
 | Dictation | Existing Apple Speech integration; edit transcription and add it to the draft | [Voice workflows](https://getmoshi.app/docs/voice) |
@@ -38,7 +39,7 @@ attachments are limited to four files, 8 MB each. Local sent previews are bounde
 | --- | --- |
 | Browser previews | Verify URL, tunnel ownership, lifecycle, and explicit user navigation. See [Browser Preview](https://getmoshi.app/docs/browser-preview). |
 | Additional providers and multiplexers | Add providers and tmux after verifying their transcript, discovery, and send contracts. |
-| Usage, background notifications, agent creation | Separate integrations; no inferred account metrics or background agent supervision. See [Agents and Usages](https://getmoshi.app/docs/agents-usages). |
+| Account quotas, background notifications, agent creation | Separate integrations; no inferred account metrics or background agent supervision. See [Agents and Usages](https://getmoshi.app/docs/agents-usages). |
 
 ## Validation
 

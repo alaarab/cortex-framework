@@ -270,13 +270,16 @@ final class ChatRelaySSH: @unchecked Sendable {
         try LiveHost(name: "Chat fixture", address: "127.0.0.1", port: listener.localAddress!.port!, username: "fixture",
                      fingerprint: MoshiConnection.fingerprint(publicKey: String(openSSHPublicKey: NIOSSHPrivateKey(ed25519Key: hostKey).publicKey)))
     }
-    static func start(forwardPorts: [Int: Int] = [24543: 24543]) async throws -> ChatRelaySSH {
+    static func start(forwardPorts: [Int: Int] = [24543: 24543], progressCommand: String? = nil) async throws -> ChatRelaySSH {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let device = Curve25519.Signing.PrivateKey(), host = Curve25519.Signing.PrivateKey()
         let listener = try await ServerBootstrap(group: loop).childChannelInitializer { parent in
             parent.eventLoop.makeCompletedFuture {
                 try parent.pipeline.syncOperations.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [.init(ed25519Key: host)], userAuthDelegate: ChatRelayAuth(key: device))),
                 allocator: parent.allocator, inboundChildChannelInitializer: { child, type in
+                    if case .session = type, let progressCommand {
+                        return child.pipeline.addHandler(ChatProgressFixtureProcess(command: progressCommand))
+                    }
                     guard case .directTCPIP(let target) = type, target.targetHost == "127.0.0.1", let port = forwardPorts[target.targetPort] else {
                         return child.eventLoop.makeFailedFuture(LiveConnectionError.disconnected)
                     }
