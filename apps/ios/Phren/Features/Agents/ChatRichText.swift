@@ -16,8 +16,13 @@ struct ChatRichText: View {
         var language: String?
         func flush() {
             guard !lines.isEmpty else { return }
-            result.append(.init(id: result.count, text: lines.joined(separator: "\n"), language: language, heading: false))
+            let raw = lines.joined(separator: "\n")
+            // Transcript delimiters are not visual paragraphs. Preserve code
+            // whitespace, but do not render blank lines around prose blocks.
+            let content = language == nil ? raw.trimmingCharacters(in: .whitespacesAndNewlines) : raw
             lines = []
+            guard !content.isEmpty else { return }
+            result.append(.init(id: result.count, text: content, language: language, heading: false))
         }
         for line in text.components(separatedBy: "\n") {
             if line.hasPrefix("```") {

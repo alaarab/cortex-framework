@@ -43,13 +43,16 @@ struct AgentChatView: View {
     @State private var showingDictation = false
     @State private var previewImage: ChatAttachmentDraft?
     @State private var historyTask: Task<Void, Never>?
-    @State private var atBottom = true
+    @State private var bottomPosition: CGFloat = 0
     @State private var nearHistoryTop = false
     @State private var paginationReady = false
     @State private var requestedHistoryLine: Int?
     @State private var scrollHeight: CGFloat = 0
     @ScaledMetric(relativeTo: .body) private var composerTextSize = 14.0
     @FocusState private var composing: Bool
+    // Recalculate when the keyboard changes the viewport as well as when the
+    // transcript moves; either measurement can arrive first during layout.
+    private var atBottom: Bool { bottomPosition <= scrollHeight + 60 }
 
     private var currentHost: LiveHost? {
         (try? LiveSessionPreferences.read(hostData))?.hosts.first { $0.id == session.host.id }
@@ -68,84 +71,88 @@ struct AgentChatView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        if model.loading && model.messages.isEmpty { ProgressView("Opening conversation…").frame(maxWidth: .infinity).padding(.top, 40) }
-                        if model.target == nil && !model.loading {
-                            Text("Choose an agent").font(.title2.weight(.semibold))
-                            ForEach(model.panes) { pane in
-                                if (try? pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id, muxID: session.host.muxID)) != nil {
-                                    Button {
-                                        model.choose(pane, session: session); refresh = UUID()
-                                    } label: {
-                                        HStack { VStack(alignment: .leading) { Text(pane.displayTitle); Text(pane.agent ?? "").font(.caption) }; Spacer(); Image(systemName: "chevron.right") }
-                                            .padding(16).phrenCard()
-                                    }.buttonStyle(.plain).accessibilityIdentifier("chat-pane:\(pane.id)")
-                                } else {
-                                    NavigationLink {
-                                        HerdrTerminalView(host: session.host, session: session, paneID: pane.id).toolbar(.visible, for: .navigationBar)
-                                    } label: {
-                                        Label("\(pane.displayTitle) · Open terminal", systemImage: "terminal").font(.subheadline)
-                                    }
-                                }
-                            }
-                            Text("Native chat supports Codex, Claude Code, and GitHub Copilot sessions recognized on this computer.")
-                                .font(.footnote).foregroundStyle(PhrenTheme.textMuted)
-                            if model.panes.contains(where: { $0.agent == "copilot" }) {
-                                Link("Set up Copilot chat", destination: URL(string: "https://alaarab.github.io/phren/phren-hook.html")!)
-                                    .font(.footnote)
-                            }
-                        }
-                        if let error = model.error { connectionIssue(error) }
-                        if currentHost != session.host { connectionIssue("This computer's connection changed. Reopen chat from the current session list.") }
-                        if model.hasMore {
-                            VStack(spacing: 8) {
-                                if model.loadingHistory { ProgressView().accessibilityLabel("Loading earlier messages") }
-                                else if model.historyError != nil {
-                                    Button("Retry loading earlier messages") {
-                                        requestedHistoryLine = nil
-                                        loadHistoryIfNeeded(proxy)
-                                    }.font(.caption)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 24)
-                            .background(GeometryReader { geometry in
-                                Color.clear.preference(key: ChatHistoryPosition.self, value: geometry.frame(in: .named("chat-scroll")).minY)
-                            })
-                            .accessibilityIdentifier("chat-history")
-                        }
-                        if model.history.reachedLimit {
-                            Text("Showing the most recent loaded history to keep this chat responsive.").font(.caption).foregroundStyle(PhrenTheme.textDim)
-                        }
-                        ForEach(ChatTimelineEntry.group(model.messages)) { entry in
-                            if entry.isActivity {
-                                ChatToolActivity(messages: entry.messages).id(entry.id)
-                            } else if let message = entry.messages.first {
-                                ChatMessageRow(message: message, revealedText: model.reveal.visible[message.id], images: model.sentImages.filter { item in
-                                    message.role == .user && item.path.map { message.text.contains($0) } == true
-                                }, preview: { previewImage = $0 }, historical: {
-                                    if let target = model.target {
-                                        ForEach(message.imageBlocks, id: \.self) { block in
-                                            ChatHistoricalImage(session: session, target: target, line: message.line, block: block, active: active, preview: { previewImage = $0 })
+                    VStack(spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            if model.loading && model.messages.isEmpty { ProgressView("Opening conversation…").frame(maxWidth: .infinity).padding(.top, 40) }
+                            if model.target == nil && !model.loading {
+                                Text("Choose an agent").font(.title2.weight(.semibold))
+                                ForEach(model.panes) { pane in
+                                    if (try? pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id, muxID: session.host.muxID)) != nil {
+                                        Button {
+                                            model.choose(pane, session: session); refresh = UUID()
+                                        } label: {
+                                            HStack { VStack(alignment: .leading) { Text(pane.displayTitle); Text(pane.agent ?? "").font(.caption) }; Spacer(); Image(systemName: "chevron.right") }
+                                                .padding(16).phrenCard()
+                                        }.buttonStyle(.plain).accessibilityIdentifier("chat-pane:\(pane.id)")
+                                    } else {
+                                        NavigationLink {
+                                            HerdrTerminalView(host: session.host, session: session, paneID: pane.id).toolbar(.visible, for: .navigationBar)
+                                        } label: {
+                                            Label("\(pane.displayTitle) · Open terminal", systemImage: "terminal").font(.subheadline)
                                         }
                                     }
-                                }).id(message.id)
+                                }
+                                Text("Native chat supports Codex, Claude Code, and GitHub Copilot sessions recognized on this computer.")
+                                    .font(.footnote).foregroundStyle(PhrenTheme.textMuted)
+                                if model.panes.contains(where: { $0.agent == "copilot" }) {
+                                    Link("Set up Copilot chat", destination: URL(string: "https://alaarab.github.io/phren/phren-hook.html")!)
+                                        .font(.footnote)
+                                }
                             }
+                            if let error = model.error { connectionIssue(error) }
+                            if currentHost != session.host { connectionIssue("This computer's connection changed. Reopen chat from the current session list.") }
+                            if model.hasMore {
+                                VStack(spacing: 8) {
+                                    if model.loadingHistory { ProgressView().accessibilityLabel("Loading earlier messages") }
+                                    else if model.historyError != nil {
+                                        Button("Retry loading earlier messages") {
+                                            requestedHistoryLine = nil
+                                            loadHistoryIfNeeded(proxy)
+                                        }.font(.caption)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 24)
+                                .background(GeometryReader { geometry in
+                                    Color.clear.preference(key: ChatHistoryPosition.self, value: geometry.frame(in: .named("chat-scroll")).minY)
+                                })
+                                .accessibilityIdentifier("chat-history")
+                            }
+                            if model.history.reachedLimit {
+                                Text("Showing the most recent loaded history to keep this chat responsive.").font(.caption).foregroundStyle(PhrenTheme.textDim)
+                            }
+                            ForEach(ChatTimelineEntry.group(model.messages)) { entry in
+                                if entry.isActivity {
+                                    ChatToolActivity(messages: entry.messages).id(entry.id)
+                                } else if let message = entry.messages.first {
+                                    ChatMessageRow(message: message, revealedText: model.reveal.visible[message.id], images: model.sentImages.filter { item in
+                                        message.role == .user && item.path.map { message.text.contains($0) } == true
+                                    }, preview: { previewImage = $0 }, historical: {
+                                        if let target = model.target {
+                                            ForEach(message.imageBlocks, id: \.self) { block in
+                                                ChatHistoricalImage(session: session, target: target, line: message.line, block: block, active: active, preview: { previewImage = $0 })
+                                            }
+                                        }
+                                    }).id(message.id)
+                                }
+                            }
+                            if let prompt = model.question, model.needsAnswer, model.questionsSupported {
+                                ChatQuestionCard(prompt: prompt, busy: model.answering || !active || !model.connected) { selections in
+                                    sendTask = Task { await model.answer(session, question: prompt, selections: selections) }
+                                }.id(prompt.id)
+                            } else if let approval = model.approval {
+                                ChatApprovalCard(approval: approval, busy: model.answering || !active || !model.interactionConnected) { approve in
+                                    sendTask = Task { await model.answer(session, approval: approval, approve: approve) }
+                                }.id(approval.id)
+                            }
+                            if model.connected && model.messages.isEmpty { Text("Ready for your message.").foregroundStyle(PhrenTheme.textMuted).padding(.top, 40) }
                         }
-                        if let prompt = model.question, model.needsAnswer, model.questionsSupported {
-                            ChatQuestionCard(prompt: prompt, busy: model.answering || !active || !model.connected) { selections in
-                                sendTask = Task { await model.answer(session, question: prompt, selections: selections) }
-                            }.id(prompt.id)
-                        } else if let approval = model.approval {
-                            ChatApprovalCard(approval: approval, busy: model.answering || !active || !model.interactionConnected) { approve in
-                                sendTask = Task { await model.answer(session, approval: approval, approve: approve) }
-                            }.id(approval.id)
-                        }
-                        if model.connected && model.messages.isEmpty { Text("Ready for your message.").foregroundStyle(PhrenTheme.textMuted).padding(.top, 40) }
+                        // The scroll marker is not a message: it must not add
+                        // another inter-message gap below the final reply.
                         GeometryReader { geometry in
                             Color.clear.preference(key: ChatBottomPosition.self, value: geometry.frame(in: .named("chat-scroll")).maxY)
                         }.frame(height: 1).id("chat-bottom")
                     }
-                    .padding(18)
+                    .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 6)
                 }
                 .accessibilityIdentifier("chat-transcript")
                 .contentShape(Rectangle())
@@ -171,7 +178,7 @@ struct AgentChatView: View {
                     Color.clear.onAppear { scrollHeight = geometry.size.height }
                         .onChange(of: geometry.size.height) { _, height in scrollHeight = height }
                 })
-                .onPreferenceChange(ChatBottomPosition.self) { bottom in atBottom = bottom <= scrollHeight + 60 }
+                .onPreferenceChange(ChatBottomPosition.self) { bottomPosition = $0 }
                 .overlay(alignment: .bottomTrailing) {
                     if !atBottom {
                         Button { withAnimation { proxy.scrollTo("chat-bottom", anchor: .bottom) } } label: {

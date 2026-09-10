@@ -71,7 +71,7 @@ import UIKit
         }
         if flag("--chat-design") {
             append("user", "Make the conversation easier to read. Keep the details close by.")
-            append("assistant", "I'll tighten the session header and collect tool activity into a single row. Replies will have more room to breathe.")
+            append("assistant", "I'll tighten the session header and collect tool activity into a single row. Replies will have more room to breathe.\n\n")
             for (command, output) in [("git diff --stat", "3 files changed, 42 insertions(+), 18 deletions(-)"), ("swift test --filter ChatTimelineTests", "All 4 timeline tests passed.")] {
                 let arguments = String(decoding: try JSONSerialization.data(withJSONObject: ["cmd": command]), as: UTF8.self)
                 entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call", "name": "exec_command", "arguments": arguments]]])

@@ -24,6 +24,13 @@ Each compact row names its computer; tap to chat or use its info button for
 terminal and session details. Search matches computers, projects, titles, agents,
 and folders. Computer connections, Skills, and Agent instructions remain below.
 
+**Settings → Appearance → Theme** offers Midnight (black with bright purple
+text), Amethyst (deep violet), Graphite (warm charcoal), and Slate (the original
+cyan palette). Midnight is the default. Previews apply immediately, the choice
+survives relaunch, and switching themes preserves navigation and chat drafts.
+Chats use the same palette as the app and terminal, with compact spacing around
+tool activity and the bottom composer.
+
 **Memory maintenance**, available from Projects and Settings, is optional. Its
 overview groups candidates, stale memories, and conflicts by project and store.
 Open a project to copy a maintenance request into an agent conversation or

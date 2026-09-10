@@ -45,14 +45,19 @@ final class AgentChatTests: XCTestCase {
         XCTAssertGreaterThan(box.frame.maxY, app.frame.maxY - 50)
         XCTAssertLessThan(box.frame.height, 100)
         XCTAssertGreaterThan(composer.frame.width, app.frame.width - 55)
+        let lastLine = app.staticTexts["Ready to test."]
+        XCTAssertTrue(lastLine.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(box.frame.minY - lastLine.frame.maxY, 18)
         composer.tap(); composer.typeText("Keep this draft")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(box.frame.minY - lastLine.frame.maxY, 18)
         capture(app, "Smaller chat text and bottom composer")
         app.staticTexts["Ready to test."].tap()
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
         XCTAssertEqual(composer.value as? String, "Keep this draft")
         XCTAssertGreaterThan(box.frame.maxY, app.frame.maxY - 50)
+        XCTAssertLessThanOrEqual(box.frame.minY - lastLine.frame.maxY, 18)
         composer.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.buttons["Copy code"].tap()
@@ -137,6 +142,9 @@ final class AgentChatTests: XCTestCase {
         XCTAssertLessThanOrEqual(group.frame.height, 46)
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         XCTAssertFalse(app.staticTexts["All 4 timeline tests passed."].exists)
+        XCTAssertFalse(app.buttons["Latest messages"].exists, "A settled conversation already at the bottom does not need a jump button")
+        let introduction = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "I'll tighten the session header")).firstMatch
+        XCTAssertLessThanOrEqual(group.frame.minY - introduction.frame.maxY, 18, "Trailing transcript newlines must not add space above tools")
         capture(app, "Custom chat with compact activity")
         group.tap()
         XCTAssertEqual(group.value as? String, "Expanded")
@@ -186,18 +194,24 @@ final class AgentChatTests: XCTestCase {
         XCTAssertLessThanOrEqual(activity.frame.height, 16)
         XCTAssertFalse(app.buttons["chat-token-usage"].exists, "Usage must not take space above the composer")
         capture(app, "Waiting for the agent to respond")
-        let receiving = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Receiving reply…"), object: activity)
-        XCTAssertEqual(XCTWaiter.wait(for: [receiving], timeout: 8), .completed)
         let growing = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "The reply is arriving word by word.")).firstMatch
-        XCTAssertTrue(growing.waitForExistence(timeout: 3))
-        let partialCount = growing.label.count
+        var partialCount = 0
+        // Observe the text in the same polling pass as the activity state.
+        // A second waitForExistence adds a full polling interval, which can
+        // miss the short reveal entirely on fast devices.
+        let receiving = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard growing.exists, activity.label == "Receiving reply…" else { return false }
+            partialCount = growing.label.count
+            return partialCount > 0
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [receiving], timeout: 8), .completed)
         capture(app, "Reply appearing progressively")
         let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Finished"), object: activity)
         XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 15), .completed)
         XCTAssertFalse(app.buttons["chat-token-usage"].exists)
         let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "The reply is arriving word by word.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 5))
-        XCTAssertTrue(reply.label.hasSuffix("conversation. "))
+        XCTAssertTrue(reply.label.hasSuffix("conversation."))
         XCTAssertGreaterThan(reply.label.count, partialCount, "The reply should grow after its first visible words")
         capture(app, "Completed streamed reply and reported tokens")
         app.buttons["Chat options"].tap()

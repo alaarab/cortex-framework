@@ -1,27 +1,28 @@
 import SwiftUI
 
-/// Cool slate surfaces, clear cyan actions, and Phren's lavender accents.
+/// Semantic colors follow the saved appearance without resetting view state.
 enum PhrenTheme {
-    static let bg = Color(hex: 0x292D3C)
-    static let bgSunken = Color(hex: 0x242837)
-    static let surface = Color(hex: 0x373D50)
-    static let surfaceRaised = Color(hex: 0x48516A)
+    private static var palette: PhrenPalette { PhrenAppearance.shared.style.palette }
+    static var bg: Color { Color(hex: palette.background) }
+    static var bgSunken: Color { Color(hex: palette.sunken) }
+    static var surface: Color { Color(hex: palette.surface) }
+    static var surfaceRaised: Color { Color(hex: palette.raised) }
 
     // Chat uses quieter surfaces so the transcript carries the hierarchy.
-    static let chatCanvas = Color(hex: 0x272832)
-    static let chatPanel = Color(hex: 0x1C1E27)
+    static var chatCanvas: Color { Color(hex: palette.chatCanvas) }
+    static var chatPanel: Color { Color(hex: palette.chatPanel) }
 
-    static let text = Color(hex: 0xF3F2F8)
-    static let textSecondary = Color(hex: 0xDCDFEF)
-    static let textMuted = Color(hex: 0xBCC3D8)
-    static let textDim = Color(hex: 0xABB3CA)
+    static var text: Color { Color(hex: palette.text) }
+    static var textSecondary: Color { Color(hex: palette.secondary) }
+    static var textMuted: Color { Color(hex: palette.muted) }
+    static var textDim: Color { Color(hex: palette.dim) }
 
-    static let navigation = Color(hex: 0xE4E3F5)
-    static let accent = Color(hex: 0xB8AAF2)
-    static let accentHover = Color(hex: 0xD2C5FF)
-    static let accentSolid = Color(hex: 0x71609E)
-    static let cyan = Color(hex: 0x70DBE8)
-    static let lavender = Color(hex: 0xB8AAF2)
+    static var navigation: Color { Color(hex: palette.navigation) }
+    static var accent: Color { Color(hex: palette.accent) }
+    static var accentHover: Color { Color(hex: palette.hover) }
+    static var accentSolid: Color { Color(hex: palette.solid) }
+    static var cyan: Color { Color(hex: palette.action) }
+    static var lavender: Color { accent }
 
     static let border = Color.white.opacity(0.07)
     static let borderStrong = Color.white.opacity(0.14)
@@ -34,7 +35,7 @@ enum PhrenTheme {
     static let green = success
     static let amber = warning
     static let red = danger
-    static let violet = accentSolid
+    static var violet: Color { accentSolid }
 
     /// Semantic chip colors shared across screens.
     static func chipColor(_ role: ChipRole) -> Color {

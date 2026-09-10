@@ -34,13 +34,16 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         let savedSize = AppModel.isUITesting ? 12 : defaults.double(forKey: "terminal.textSize.v1")
         terminal.setTextSize(savedSize > 0 ? savedSize : 12)
         terminal.onTextSizeChanged = { defaults.set(Double($0), forKey: "terminal.textSize.v1") }
+        applyAppearance()
+        terminal.accessibilityIdentifier = "herdr-terminal"
+    }
+    func applyAppearance() {
         terminal.nativeBackgroundColor = UIColor(PhrenTheme.bgSunken)
         terminal.nativeForegroundColor = UIColor(PhrenTheme.text)
         terminal.caretColor = UIColor(PhrenTheme.cyan)
         terminal.selectedTextBackgroundColor = UIColor(PhrenTheme.lavender.opacity(0.30))
         terminal.selectedTextForegroundColor = UIColor(PhrenTheme.text)
         terminal.selectionHandleColor = UIColor(PhrenTheme.lavender)
-        terminal.accessibilityIdentifier = "herdr-terminal"
     }
     func run(host: LiveHost, session: LiveAgentSession?, target: AgentChatTarget?, paneID: String?, commandMenu: Bool = false) async {
         let run = UUID(); generation = run
@@ -279,6 +282,7 @@ struct HerdrTerminalView: View {
         }
         #endif
         .background(PhrenTheme.bgSunken).navigationTitle("Herdr terminal").navigationBarTitleDisplayMode(.inline)
+        .onChange(of: PhrenAppearance.shared.style) { _, _ in model.applyAppearance() }
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

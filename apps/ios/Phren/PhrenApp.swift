@@ -4,6 +4,7 @@ import PhrenKit
 @main
 struct PhrenApp: App {
     @State private var model = AppModel()
+    @State private var appearance = PhrenAppearance.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -16,8 +17,10 @@ struct PhrenApp: App {
                 .environment(model)
                 .defaultAppStorage(AppModel.isUITesting ? UserDefaults(suiteName: "phren.ui-tests")! : .standard)
                 .tint(PhrenTheme.navigation)
-                // The phren identity is dark-only (docs/style.css).
+                .foregroundStyle(PhrenTheme.text)
+                // All current palettes use dark system controls and keyboards.
                 .preferredColorScheme(.dark)
+                .onChange(of: appearance.style) { _, _ in Self.applyPhrenChrome() }
                 .modifier(ExternalURLTestCapture())
                 .task { await model.bootstrap() }
                 .onChange(of: scenePhase) { _, phase in
@@ -75,6 +78,20 @@ struct PhrenApp: App {
         UISwitch.appearance().onTintColor = UIColor(PhrenTheme.accentSolid)
         UITabBar.appearance().standardAppearance = tab
         UITabBar.appearance().scrollEdgeAppearance = tab
+
+        // UIAppearance covers new screens; update existing bars as well so a
+        // theme changes immediately without discarding navigation or drafts.
+        func update(_ view: UIView) {
+            if let bar = view as? UINavigationBar {
+                bar.standardAppearance = nav; bar.scrollEdgeAppearance = nav; bar.compactAppearance = nav
+            } else if let bar = view as? UITabBar {
+                bar.standardAppearance = tab; bar.scrollEdgeAppearance = tab
+            } else if let toggle = view as? UISwitch { toggle.onTintColor = UIColor(PhrenTheme.accentSolid) }
+            for child in view.subviews { update(child) }
+        }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows { update(window) }
+        }
     }
 }
 

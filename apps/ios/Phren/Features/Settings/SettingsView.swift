@@ -31,6 +31,16 @@ struct SettingsView: View {
                 ActionErrorBanner()
                 ScrollViewReader { proxy in
                 PhrenForm {
+                Section("Appearance") {
+                    NavigationLink { AppearanceSettingsView() } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "paintpalette").foregroundStyle(PhrenTheme.accent)
+                            Text("Theme")
+                            Spacer()
+                            Text(PhrenAppearance.shared.style.name).foregroundStyle(PhrenTheme.textMuted)
+                        }
+                    }.accessibilityIdentifier("settings-theme")
+                }
                 Section {
                     ForEach(model.storeContexts) { context in
                         StoreHealthCard(
