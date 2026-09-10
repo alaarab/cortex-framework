@@ -29,7 +29,7 @@ struct ChatRichText: View {
         return result
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(blocks) { block in
                 if let language = block.language {
                     VStack(alignment: .leading, spacing: 8) {
@@ -42,10 +42,12 @@ struct ChatRichText: View {
                         ScrollView(.horizontal) {
                             Text(block.text).font(.callout.monospaced()).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
                         }
-                    }.padding(12).background(PhrenTheme.bgSunken, in: RoundedRectangle(cornerRadius: 12))
+                    }.padding(12).background(PhrenTheme.chatPanel, in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(PhrenTheme.border, lineWidth: 1))
                 } else {
                     Text((try? AttributedString(markdown: block.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block.text))
-                        .font(block.heading ? .headline : .body).textSelection(.enabled)
+                        .font(block.heading ? .system(.headline, design: .monospaced) : .system(.callout, design: .monospaced))
+                        .lineSpacing(4).textSelection(.enabled).tint(PhrenTheme.cyan)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

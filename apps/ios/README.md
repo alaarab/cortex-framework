@@ -272,6 +272,13 @@ in Moshi cannot redirect a native reply. **Settings → Agent conversations → 
 agents in** makes Moshi an optional default; **Open terminal in Moshi** remains
 available from chat options.
 
+The conversation has a compact session header with a direct terminal button.
+Assistant replies use an open reading surface; consecutive tool calls and results
+collapse into one activity row with a command preview and operation count. Expand
+it to read or copy the full details. The composer keeps text, attachments, project
+context, dictation, send/stop, and progress together. It opens the keyboard only
+when you select the text field.
+
 The plus button attaches photos, camera images, files, or a pasted image. Preview
 and remove attachments before sending. Up to four files (8 MB each) upload over
 SSH to the selected computer; the agent receives their local paths. Photos are

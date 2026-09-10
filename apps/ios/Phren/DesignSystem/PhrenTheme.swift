@@ -7,6 +7,10 @@ enum PhrenTheme {
     static let surface = Color(hex: 0x373D50)
     static let surfaceRaised = Color(hex: 0x48516A)
 
+    // Chat uses quieter surfaces so the transcript carries the hierarchy.
+    static let chatCanvas = Color(hex: 0x272832)
+    static let chatPanel = Color(hex: 0x1C1E27)
+
     static let text = Color(hex: 0xF3F2F8)
     static let textSecondary = Color(hex: 0xDCDFEF)
     static let textMuted = Color(hex: 0xBCC3D8)

@@ -2,6 +2,50 @@ import XCTest
 
 final class AgentChatTests: XCTestCase {
     @MainActor
+    func testCompactActivityAndDirectTerminalKeepConversationUsable() {
+        let app = launch(extra: ["--chat-design"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let group = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat-tool-group:")).firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 8))
+        XCTAssertEqual(group.label, "Shell, 2 operations")
+        XCTAssertEqual(group.value as? String, "Collapsed")
+        XCTAssertLessThanOrEqual(group.frame.height, 46)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["All 4 timeline tests passed."].exists)
+        capture(app, "Custom chat with compact activity")
+        group.tap()
+        XCTAssertEqual(group.value as? String, "Expanded")
+        XCTAssertTrue(app.staticTexts["All 4 timeline tests passed."].exists)
+        XCTAssertTrue(app.staticTexts["3 files changed, 42 insertions(+), 18 deletions(-)"].exists)
+        capture(app, "Expanded commands and results")
+        group.tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Keep the Phren details")
+        capture(app, "Integrated composer with keyboard")
+        app.buttons["chat-terminal"].tap()
+        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["Agent chat"].exists)
+        XCTAssertEqual(composer.value as? String, "Keep the Phren details")
+        app.buttons["chat-close"].tap()
+        XCTAssertTrue(app.buttons["live-chat:w7:w7:t9"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testCustomChatWithLargeTextKeepsActionsReachable() {
+        let app = launch(extra: ["--chat-design", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 8))
+        for identifier in ["chat-close", "chat-terminal", "Chat options", "Add attachment", "Dictate message"] {
+            XCTAssertTrue(app.buttons[identifier].isHittable, identifier)
+        }
+        capture(app, "Custom chat at accessibility text size")
+        app.buttons["chat-close"].tap()
+        XCTAssertTrue(app.buttons["live-chat:w7:w7:t9"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testWaitingProgressTokenUsageAndFinishedReply() {
         let app = launch(extra: ["--chat-streaming"])
         app.buttons["live-chat:w7:w7:t9"].tap()
@@ -60,7 +104,9 @@ final class AgentChatTests: XCTestCase {
         XCTAssertFalse(app.buttons["Send answer"].isEnabled)
         app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Keep the Phren accent")).firstMatch.tap()
         capture(app, "Inline question in Phren")
+        XCTAssertTrue(app.buttons["Send answer"].isEnabled)
         app.buttons["Send answer"].tap()
+        XCTAssertTrue(app.staticTexts["Answer sent"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Answer received in this conversation."].waitForExistence(timeout: 8))
     }
 
@@ -203,7 +249,7 @@ final class AgentChatTests: XCTestCase {
     func testNativeChatReadsAndRepliesToTheSelectedConversation() {
         let app = launch()
         app.buttons["live-chat:w7:w7:t9"].tap()
-        XCTAssertTrue(app.navigationBars["Agent chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         composer.tap(); composer.typeText("Use the cyan accent")
@@ -298,7 +344,7 @@ final class AgentChatTests: XCTestCase {
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         XCTAssertTrue((composer.value as? String)?.contains("Finding — phone (sample/brain)") == true)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Received in codex")).firstMatch.exists)
-        app.navigationBars["Agent chat"].buttons["Done"].tap()
+        app.buttons["chat-close"].tap()
         app.buttons["live-chat:w7:w7:t9"].tap()
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertTrue((composer.value as? String)?.contains("Finding — phone (sample/brain)") == true)
@@ -319,7 +365,7 @@ final class AgentChatTests: XCTestCase {
         let app = launch(extra: ["--prefer-moshi", "--capture-moshi-links"])
         app.buttons["live-chat:w7:w7:t9"].tap()
         app.assertMoshiOpened("moshi://herdr?workspace=w7")
-        XCTAssertFalse(app.navigationBars["Agent chat"].exists)
+        XCTAssertFalse(app.buttons["chat-close"].exists)
     }
 
     @MainActor
@@ -332,7 +378,7 @@ final class AgentChatTests: XCTestCase {
         let found = app.buttons["discovered-session:A1000000-0000-0000-0000-000000000001:w7:w7:t9"]
         XCTAssertTrue(found.waitForExistence(timeout: 10))
         found.tap()
-        XCTAssertTrue(app.navigationBars["Agent chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
     }
 
@@ -343,7 +389,12 @@ final class AgentChatTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Agents"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Agents"].tap()
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Test Mac,")).firstMatch.tap()
+        let host = app.buttons["live-host:A1000000-0000-0000-0000-000000000001"]
+        for _ in 0..<5 {
+            if host.isHittable { break }
+            app.swipeUp()
+        }
+        host.tap()
         XCTAssertTrue(app.buttons["live-chat:w7:w7:t9"].waitForExistence(timeout: 10))
         return app
     }
