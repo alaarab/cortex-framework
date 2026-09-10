@@ -272,6 +272,7 @@ struct HerdrTerminalView: View {
             TerminalControls(terminal: model.terminal, hostID: host.id,
                              source: target?.source ?? session?.tab.agent ?? "", enabled: model.connected && active, control: $model.control,
                              shortcuts: $shortcuts, send: model.input)
+                .padding(.bottom, 6)
         }
         #if DEBUG && targetEnvironment(simulator)
         .overlay(alignment: .topLeading) {
