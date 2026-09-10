@@ -323,7 +323,7 @@ struct AgentChatView: View {
                 if let cached = usage.cachedInput { Text("Cached input: \(cached.formatted()) tokens") }
                 if let modelName = model.modelName { Text(modelName) }
             } label: {
-                Text("\(usage.output.formatted()) tokens out · \(usage.input.formatted()) in")
+                Text("\(usage.output.formatted(.number.notation(.compactName))) out · \(usage.input.formatted(.number.notation(.compactName))) in")
                     .font(.caption2.monospacedDigit()).foregroundStyle(PhrenTheme.textMuted)
             }.accessibilityIdentifier("chat-token-usage").accessibilityLabel("Latest reported usage: \(usage.output) output tokens, \(usage.input) input tokens")
         } else if model.progressUnavailable {
@@ -336,7 +336,7 @@ struct AgentChatView: View {
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 6) {
             if !model.attachments.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 10) {
@@ -374,19 +374,23 @@ struct AgentChatView: View {
                 }.scrollIndicators(.hidden)
             }
             if let status = model.deliveryStatus { Text(status).font(.caption).foregroundStyle(PhrenTheme.cyan) }
-            if active, model.target != nil, !model.connected, !model.loading {
-                HStack {
-                    Label("Reconnecting…", systemImage: "wifi.exclamationmark").font(.caption)
-                    Spacer()
-                    Button("Reconnect") { refresh = UUID() }
-                        .font(.caption.weight(.semibold)).accessibilityIdentifier("chat-reconnect")
-                }.foregroundStyle(PhrenTheme.warning)
-            } else if model.connected, model.awaitingReply || model.reveal.isRevealing || model.needsAnswer || model.approval != nil || model.progress.phase != nil || selectedPane?.agentStatus == "working" || model.liveActivity == "working" {
-                ChatActivityIndicator(waiting: model.awaitingReply, revealing: model.reveal.isRevealing,
-                                      needsAnswer: model.needsAnswer || model.approval != nil,
-                                      working: selectedPane?.agentStatus == "working" || (model.interactionConnected && model.liveActivity == "working"),
-                                      progress: model.progress, sentAt: model.sentAt)
-            }
+            HStack(spacing: 8) {
+                if active, model.target != nil, !model.connected, !model.loading {
+                    HStack {
+                        Label("Reconnecting…", systemImage: "wifi.exclamationmark").font(.caption)
+                        Spacer()
+                        Button("Reconnect") { refresh = UUID() }
+                            .font(.caption.weight(.semibold)).accessibilityIdentifier("chat-reconnect")
+                    }.foregroundStyle(PhrenTheme.warning)
+                } else if model.connected, model.awaitingReply || model.reveal.isRevealing || model.needsAnswer || model.approval != nil || model.progress.phase != nil || selectedPane?.agentStatus == "working" || model.liveActivity == "working" {
+                    ChatActivityIndicator(waiting: model.awaitingReply, revealing: model.reveal.isRevealing,
+                                          needsAnswer: model.needsAnswer || model.approval != nil,
+                                          working: selectedPane?.agentStatus == "working" || (model.interactionConnected && model.liveActivity == "working"),
+                                          progress: model.progress, sentAt: model.sentAt)
+                }
+                Spacer(minLength: 2)
+                tokenUsage
+            }.lineLimit(1).padding(.horizontal, 6)
             if model.needsAnswer {
                 NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar) } label: {
                     Label(model.approval != nil || model.question != nil ? "Or answer in Herdr" : "Answer in Herdr terminal", systemImage: "terminal")
@@ -395,55 +399,68 @@ struct AgentChatView: View {
             }
             if let error = model.deliveryError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-delivery-error") }
             if let error = model.draftStorageError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-draft-storage-error") }
-            HStack(alignment: .bottom, spacing: 4) {
-                Button { showingAttachments = true } label: {
-                    Image(systemName: "plus").font(.system(size: 21, weight: .light)).frame(width: 36, height: 44).contentShape(Rectangle())
-                }.accessibilityLabel("Add attachment").disabled(model.target == nil || model.sending)
+            VStack(spacing: 0) {
                 TextField("Message \(model.target?.providerName ?? "agent")…", text: $model.draft, axis: .vertical)
-                    .lineLimit(1...5).focused($composing).font(.system(size: composerTextSize, design: .monospaced))
-                    .tint(PhrenTheme.cyan).padding(.vertical, 12).padding(.horizontal, 4)
-                    .frame(minHeight: 44)
+                    .lineLimit(1...4).focused($composing).font(.system(size: composerTextSize, design: .monospaced))
+                    .tint(PhrenTheme.cyan).padding(.vertical, 8).padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                     .accessibilityIdentifier("chat-composer").disabled(model.target == nil)
-                Button { showingDictation = true } label: {
-                    Image(systemName: "mic").font(.system(size: 20)).frame(width: 40, height: 44).contentShape(Rectangle())
-                }.accessibilityLabel("Dictate message").disabled(model.target == nil || model.sending)
-                if selectedPane?.agentStatus == "working", !model.needsAnswer {
-                    Button { sendTask = Task { await model.stop(session) } } label: {
-                        Image(systemName: "stop.circle").font(.system(size: 21)).frame(width: 40, height: 44).contentShape(Rectangle())
-                    }.accessibilityLabel("Stop").accessibilityIdentifier("chat-stop")
-                        .disabled(!active || !model.connected || model.sending || model.stopping)
-                }
-                Button {
-                    composing = false
-                    if model.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "/", model.attachments.isEmpty {
-                        openCommandMenu()
-                    } else {
-                        let isCommand = AgentSlashCommand.isCommand(model.draft), pane = model.target?.paneID
-                        sendTask = Task {
-                            await model.send(session)
-                            if isCommand, model.deliveryError == nil, let pane {
-                                commandDestination = .init(paneID: pane, menu: false)
-                                // /new, /clear and /resume may change the session ID.
-                                model.chooseAnother()
+                HStack(alignment: .bottom, spacing: 4) {
+                    Button { showingAttachments = true } label: {
+                        Image(systemName: "plus").font(.system(size: 21, weight: .light)).frame(width: 36, height: 44).contentShape(Rectangle())
+                    }.accessibilityLabel("Add attachment").disabled(model.target == nil || model.sending)
+                    NavigationLink {
+                        HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar)
+                    } label: {
+                        Image(systemName: "terminal").font(.system(size: 18)).frame(width: 44, height: 44).contentShape(Rectangle())
+                    }.accessibilityLabel("Open Herdr terminal").accessibilityIdentifier("chat-composer-terminal")
+                        .disabled(model.target == nil)
+                    Spacer(minLength: 4)
+                    Button { showingDictation = true } label: {
+                        Image(systemName: "mic").font(.system(size: 20)).frame(width: 40, height: 44).contentShape(Rectangle())
+                    }.accessibilityLabel("Dictate message").disabled(model.target == nil || model.sending)
+                    if selectedPane?.agentStatus == "working", !model.needsAnswer {
+                        Button { sendTask = Task { await model.stop(session) } } label: {
+                            Image(systemName: "stop.circle").font(.system(size: 21)).frame(width: 40, height: 44).contentShape(Rectangle())
+                        }.accessibilityLabel("Stop").accessibilityIdentifier("chat-stop")
+                            .disabled(!active || !model.connected || model.sending || model.stopping)
+                    }
+                    Button {
+                        composing = false
+                        if model.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "/", model.attachments.isEmpty {
+                            openCommandMenu()
+                        } else {
+                            let isCommand = AgentSlashCommand.isCommand(model.draft), pane = model.target?.paneID
+                            sendTask = Task {
+                                await model.send(session)
+                                if isCommand, model.deliveryError == nil, let pane {
+                                    commandDestination = .init(paneID: pane, menu: false)
+                                    // /new, /clear and /resume may change the session ID.
+                                    model.chooseAnother()
+                                }
                             }
                         }
+                    } label: {
+                        if model.sending { ProgressView().frame(width: 44, height: 44) }
+                        else { Image(systemName: "arrow.up").font(.system(size: 22, weight: .semibold)).frame(width: 44, height: 44) }
                     }
-                } label: {
-                    if model.sending { ProgressView().frame(width: 44, height: 44) }
-                    else { Image(systemName: "arrow.up").font(.system(size: 22, weight: .semibold)).frame(width: 44, height: 44) }
+                    .foregroundStyle(canSend ? PhrenTheme.chatPanel : PhrenTheme.textDim)
+                    .background(canSend ? PhrenTheme.cyan : PhrenTheme.borderStrong, in: Circle())
+                    .disabled(!canSend)
+                    .accessibilityLabel("Send message").accessibilityIdentifier("chat-send")
+                    .keyboardShortcut(.return, modifiers: .command)
                 }
-                .foregroundStyle(canSend ? PhrenTheme.chatPanel : PhrenTheme.textDim)
-                .background(canSend ? PhrenTheme.cyan : PhrenTheme.borderStrong, in: Circle())
-                .disabled(!canSend)
-                .accessibilityLabel("Send message").accessibilityIdentifier("chat-send")
-                .keyboardShortcut(.return, modifiers: .command)
+                .padding(.horizontal, 6).padding(.bottom, 4)
             }
-            tokenUsage.padding(.horizontal, 4)
+            .padding(.top, 2)
+            .background(PhrenTheme.chatPanel, in: RoundedRectangle(cornerRadius: 22))
+            .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(PhrenTheme.border, lineWidth: 0.5) }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("chat-message-box")
         }
         .buttonStyle(.plain).foregroundStyle(PhrenTheme.textSecondary)
-        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
-        .background(PhrenTheme.chatPanel.ignoresSafeArea(.container, edges: .bottom))
-        .overlay(alignment: .top) { PhrenTheme.border.frame(height: 1) }
+        .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
+        .background(PhrenTheme.chatCanvas.ignoresSafeArea(.container, edges: .bottom))
     }
     private struct CommandDestination: Hashable { let paneID: String; let menu: Bool }
     private func openCommandMenu() {

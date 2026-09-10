@@ -8,6 +8,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     let terminal = TouchTerminalView(frame: .zero, font: .monospacedSystemFont(ofSize: 12, weight: .regular),
                                 options: TerminalOptions(cols: 80, rows: 24, scrollback: 2_000))
     var connected = false
+    var reconnecting = false
     var error: String?
     var control = false
     #if DEBUG && targetEnvironment(simulator)
@@ -22,6 +23,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     private var socket: HerdrTerminalSocket?
     private var writes: Task<Void, Never>?
     private var generation = UUID()
+    private var connectionID = UUID()
     override init() {
         super.init()
         terminal.terminalDelegate = self
@@ -42,10 +44,9 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     }
     func run(host: LiveHost, session: DiscoveredMoshiSession?, target: AgentChatTarget?, paneID: String?, commandMenu: Bool = false) async {
         let run = UUID(); generation = run
-        let socket = HerdrTerminalSocket(); self.socket = socket
-        connected = false; error = nil
+        connected = false; reconnecting = false; error = nil
         defer {
-            if generation == run { connected = false; self.socket = nil; writes?.cancel(); terminal.resignFirstResponder() }
+            if generation == run { connected = false; reconnecting = false; self.socket = nil; writes?.cancel(); _ = terminal.resignFirstResponder() }
         }
         do {
             #if DEBUG && targetEnvironment(simulator)
@@ -108,23 +109,43 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
                 }
                 try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .focus, workspaceID: session.workspaceID, tabID: session.tab.id, paneID: paneID)
             }
-            var resized = false
-            for try await bytes in MoshiConnection.herdrTerminal(host: host, privateKey: key, socket: socket) {
-                try Task.checkCancellation()
-                guard generation == run else { return }
-                terminal.feed(byteArray: ArraySlice(bytes)); connected = true
-                if commandMenu && !commandMenuOpened {
-                    commandMenuOpened = true
-                    if canOpenCommands { try await socket.input("/") }
-                    // A working agent or an approval keeps its input untouched.
-                }
-                try await socket.acknowledge(bytes.count)
-                if !resized {
-                    resized = true
-                    try await socket.resize(columns: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+            var recovery = HerdrTerminalRecovery()
+            var receivedBefore = false
+            while !Task.isCancelled {
+                let socket = HerdrTerminalSocket(); self.socket = socket
+                connectionID = UUID()
+                var first = true
+                do {
+                    for try await bytes in MoshiConnection.herdrTerminal(host: host, privateKey: key, socket: socket,
+                                                                       columns: terminal.getTerminal().cols, rows: terminal.getTerminal().rows) {
+                        try Task.checkCancellation()
+                        guard generation == run else { return }
+                        if first {
+                            if receivedBefore { terminal.getTerminal().resetToInitialState() }
+                            first = false; receivedBefore = true
+                            recovery.connected(at: ProcessInfo.processInfo.systemUptime)
+                        }
+                        terminal.feed(byteArray: ArraySlice(bytes)); connected = true; reconnecting = false
+                        if commandMenu && !commandMenuOpened {
+                            commandMenuOpened = true
+                            if canOpenCommands { try await socket.input("/") }
+                        }
+                        try await socket.acknowledge(bytes.count)
+                        // Yield the main actor and coalesce network bursts into
+                        // the next bounded batch, rather than repaint per packet.
+                        try await Task.sleep(for: .milliseconds(16))
+                    }
+                    throw LiveConnectionError.disconnected
+                } catch {
+                    guard !Task.isCancelled, generation == run else { return }
+                    connected = false; writes?.cancel(); writes = nil; self.socket = nil
+                    guard let delay = recovery.delay(after: error, now: ProcessInfo.processInfo.systemUptime) else { throw error }
+                    reconnecting = true
+                    try await Task.sleep(for: .seconds(delay))
+                    // Reattach the same server without refocusing a stale tab
+                    // or replaying any keyboard input from the lost connection.
                 }
             }
-            throw LiveConnectionError.disconnected
         } catch {
             if !Task.isCancelled, generation == run { self.error = error.localizedDescription }
         }
@@ -140,12 +161,15 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         }
         #endif
         guard connected, let socket else { return }
-        let previous = writes, run = generation
+        let previous = writes, run = generation, connection = connectionID
         writes = Task {
             await previous?.value
-            guard !Task.isCancelled, connected, generation == run else { return }
+            guard !Task.isCancelled, connected, generation == run, connectionID == connection else { return }
             do { try await socket.input(text) }
-            catch { connected = false; self.error = "Input wasn't confirmed. Reconnect before typing again." }
+            catch {
+                guard generation == run, connectionID == connection, !Task.isCancelled else { return }
+                connected = false; self.error = "Input wasn't confirmed. Check the terminal before typing it again."
+            }
         }
     }
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
@@ -234,10 +258,11 @@ struct HerdrTerminalView: View {
                 Circle().fill(model.connected && active ? PhrenTheme.cyan : PhrenTheme.textDim).frame(width: 6, height: 6)
                 Text("\(host.name) · \(host.herdrSession ?? "default")").lineLimit(1)
                 Spacer()
+                if model.reconnecting { Text("Reconnecting…").lineLimit(1) }
                 if !model.connected && model.error == nil && active { ProgressView().controlSize(.small) }
             }.font(.caption).foregroundStyle(PhrenTheme.textMuted).padding(12)
             if let error = model.error {
-                Label(error, systemImage: "wifi.exclamationmark").font(.footnote).foregroundStyle(PhrenTheme.warning).padding(12)
+                Label(error, systemImage: "wifi.exclamationmark").font(.caption).foregroundStyle(PhrenTheme.warning).padding(.horizontal, 12).padding(.bottom, 8)
             }
             if currentHost != host { Text("Connection settings changed. Reopen Herdr from the computer list.").font(.footnote).padding() }
             HerdrTerminalSurface(model: model).padding(.horizontal, 4)

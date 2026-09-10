@@ -17,6 +17,7 @@ configured computer's pinned SSH connection. Moshi on the iPhone is optional.
 | Dictation | Existing Apple Speech integration; edit transcription and add it to the draft | [Voice workflows](https://getmoshi.app/docs/voice) |
 | Stop | Escape to the validated, working conversation; does not terminate the process | [Chat controls](https://getmoshi.app/docs/chat-view) |
 | Readable messages | Open transcript, inline Markdown, headings, fenced code cards with Copy, grouped tool calls/results with previews and full detail expansion, copy/share messages | [Chat View](https://getmoshi.app/docs/chat-view) |
+| Compact composer | Full-width multiline text, separate control row, inline status/token counts, keyboard dismissal from the transcript, and direct Herdr access | Phren feature |
 | Keyboard send | Command-Return; ordinary Return remains available for multiline text | [Chat controls](https://getmoshi.app/docs/chat-view) |
 | Herdr terminal | Native SwiftTerm terminal over the existing SSH connection; keyboard, Ctrl/Esc/Tab/arrows, resize, reconnect and safe detachment | [Herdr](https://getmoshi.app/docs/herdr) |
 | Herdr management | Discover and select named servers; browse workspaces/tabs/panes; create workspaces, tabs and panes; rename/close workspaces and tabs | [Multiplexer chooser](https://getmoshi.app/docs/debug-multiplexer-chooser) |

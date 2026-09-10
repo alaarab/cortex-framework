@@ -24,7 +24,10 @@ final class AgentChatTests: XCTestCase {
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         XCTAssertTrue(composer.waitForExistence(timeout: 8))
         XCTAssertLessThan(composer.frame.height, 60)
-        XCTAssertGreaterThan(composer.frame.midY, app.frame.maxY - 90)
+        let box = app.descendants(matching: .any).matching(identifier: "chat-message-box").firstMatch
+        XCTAssertGreaterThan(box.frame.maxY, app.frame.maxY - 50)
+        XCTAssertLessThan(box.frame.height, 100)
+        XCTAssertGreaterThan(composer.frame.width, app.frame.width - 55)
         composer.tap(); composer.typeText("Keep this draft")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         capture(app, "Smaller chat text and bottom composer")
@@ -32,7 +35,7 @@ final class AgentChatTests: XCTestCase {
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
         XCTAssertEqual(composer.value as? String, "Keep this draft")
-        XCTAssertGreaterThan(composer.frame.midY, app.frame.maxY - 90)
+        XCTAssertGreaterThan(box.frame.maxY, app.frame.maxY - 50)
         composer.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.buttons["Copy code"].tap()

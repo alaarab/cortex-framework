@@ -22,7 +22,7 @@ public enum LiveConnectionError: LocalizedError, Equatable {
         case .changedHost: return "This computer's SSH host key has changed. The connection was stopped. Verify the computer before removing and adding this connection again."
         case .authentication: return "SSH did not accept this device's key. Add the public key to the selected user's authorized_keys file and enable Remote Login or SSH."
         case .timeout: return "The connection timed out. Check Tailscale, SSH, and that moshi-hook is running."
-        case .disconnected: return "The connection closed before session status arrived. Check that moshi-hook is running and SSH forwarding is allowed."
+        case .disconnected: return "The connection to the computer closed."
         case .response(let status): return "The computer returned HTTP \(status)."
         case .gatewayRejection(let status, let reason): return "\(reason) (HTTP \(status))"
         case .oversized: return "The Moshi hook response exceeded this request's size limit."
