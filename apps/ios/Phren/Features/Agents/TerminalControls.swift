@@ -141,76 +141,11 @@ private struct TerminalShortcutMenu: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 0) {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        ForEach(tabs, id: \.self) { name in
-                            Button { tab = name; settings = false } label: {
-                                Group { if name == "Favorites" { Image(systemName: "star") } else { Text(name) } }
-                                    .font(.caption.weight(.semibold)).padding(.horizontal, 11).frame(height: 44)
-                                    .foregroundStyle(selected == name ? PhrenTheme.lavender : PhrenTheme.text)
-                                    .background(selected == name ? PhrenTheme.lavender.opacity(0.14) : .clear, in: Capsule())
-                            }.accessibilityLabel(name + " shortcuts").accessibilityAddTraits(selected == name ? .isSelected : [])
-                        }
-                    }
-                }.scrollIndicators(.hidden)
-                Button { settings.toggle() } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44) }
-                    .accessibilityLabel("Terminal gestures")
-                Button(action: close) { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Close shortcuts")
-            }
+            header
             if settings {
                 TerminalGestureSettings()
             } else {
-                ScrollView {
-                    if selected == "Herdr" {
-                        VStack(spacing: 8) {
-                            Button(action: openWorkspaces) {
-                                shortcutLabel("Workspaces & panes", "Switch tabs, focus panes, and manage workspaces", "rectangle.split.3x1")
-                            }
-                            Button(action: openServers) {
-                                shortcutLabel("Web servers", "Open a running app in the browser", "globe")
-                            }
-                        }
-                    } else if selected == "Keys" {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 8) {
-                            keyTile("Clear line", "End · Ctrl U", "\u{05}\u{15}")
-                            keyTile("Backspace", "Delete character", "\u{7F}")
-                            keyTile("Enter", "Submit", "\r")
-                            keyTile("⇧ Tab", "Previous field", "\u{1B}[Z")
-                            keyTile("Home", "Start of line", "\u{01}")
-                            keyTile("End", "End of line", "\u{05}")
-                        }
-                    } else {
-                        let providers = selected == "Favorites" ? ["codex", "claude", "copilot"] : [selected.lowercased()]
-                        let commands = providers.flatMap { provider in
-                            AgentSlashCommand.menu(source: provider).map { (provider, $0) }
-                        }.filter { selected != "Favorites" || favorites.split(separator: ",").contains(Substring($0.0 + ":" + $0.1.name)) }
-                        if commands.isEmpty { Text("Hold a command to add it to Favorites.").font(.caption).padding() }
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth))], spacing: 8) {
-                            ForEach(Array(commands.enumerated()), id: \.offset) { _, entry in
-                                let (provider, command) = entry
-                                Button { send(command.name + " ") } label: {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(command.name).font(.system(.caption, design: .monospaced))
-                                            .lineLimit(1)
-                                        Text(selected == "Favorites" ? provider.capitalized : hint(command.name))
-                                            .font(.caption2).foregroundStyle(PhrenTheme.textMuted).lineLimit(1)
-                                    }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(8)
-                                        .background(PhrenTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
-                                }.accessibilityIdentifier("terminal-command:\(provider):\(command.name)")
-                                    .accessibilityLabel(command.name + ", " + command.detail + ", " + provider.capitalized)
-                                    .disabled(!enabled)
-                                    .contextMenu {
-                                        let id = provider + ":" + command.name
-                                        let saved = favorites.split(separator: ",").map(String.init)
-                                        Button(saved.contains(id) ? "Remove from Favorites" : "Add to Favorites", systemImage: "star") {
-                                            favorites = (saved.contains(id) ? saved.filter { $0 != id } : saved + [id]).joined(separator: ",")
-                                        }
-                                    }
-                            }
-                        }
-                    }
-                }.frame(maxHeight: 220)
+                ScrollView { shortcutContent }.frame(maxHeight: 220)
                 if !["Keys", "Herdr"].contains(selected) {
                     Text("Insert a command, then use Enter when ready.").font(.caption2).foregroundStyle(PhrenTheme.textMuted)
                 }
@@ -218,6 +153,99 @@ private struct TerminalShortcutMenu: View {
         }.padding(10).frame(idealWidth: 370, maxWidth: 400)
             .buttonStyle(.plain).foregroundStyle(PhrenTheme.text)
             .accessibilityElement(children: .contain).accessibilityIdentifier("terminal-shortcut-menu")
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 4) {
+                    ForEach(tabs, id: \.self) { name in tabButton(name) }
+                }
+            }.scrollIndicators(.hidden)
+            Button { settings.toggle() } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44) }
+                .accessibilityLabel("Terminal gestures")
+            Button(action: close) { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                .accessibilityLabel("Close shortcuts")
+        }
+    }
+
+    private func tabButton(_ name: String) -> some View {
+        Button { tab = name; settings = false } label: {
+            Group { if name == "Favorites" { Image(systemName: "star") } else { Text(name) } }
+                .font(.caption.weight(.semibold)).padding(.horizontal, 11).frame(height: 44)
+                .foregroundStyle(selected == name ? PhrenTheme.lavender : PhrenTheme.text)
+                .background(selected == name ? PhrenTheme.lavender.opacity(0.14) : .clear, in: Capsule())
+        }.accessibilityLabel(name + " shortcuts")
+            .accessibilityAddTraits(selected == name ? .isSelected : [])
+    }
+
+    @ViewBuilder private var shortcutContent: some View {
+        if selected == "Herdr" {
+            VStack(spacing: 8) {
+                Button(action: openWorkspaces) {
+                    shortcutLabel("Workspaces & panes", "Switch tabs, focus panes, and manage workspaces", "rectangle.split.3x1")
+                }
+                Button(action: openServers) {
+                    shortcutLabel("Web servers", "Open a running app in the browser", "globe")
+                }
+            }
+        } else if selected == "Keys" {
+            editingKeys
+        } else {
+            commandGrid
+        }
+    }
+
+    private var editingKeys: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 8) {
+            keyTile("Clear line", "End · Ctrl U", "\u{05}\u{15}")
+            keyTile("Backspace", "Delete character", "\u{7F}")
+            keyTile("Enter", "Submit", "\r")
+            keyTile("⇧ Tab", "Previous field", "\u{1B}[Z")
+            keyTile("Home", "Start of line", "\u{01}")
+            keyTile("End", "End of line", "\u{05}")
+        }
+    }
+
+    private var commands: [(provider: String, command: AgentSlashCommand.Command)] {
+        let providers = selected == "Favorites" ? ["codex", "claude", "copilot"] : [selected.lowercased()]
+        let saved = Set(favorites.split(separator: ",").map(String.init))
+        return providers.flatMap { provider in
+            AgentSlashCommand.menu(source: provider).compactMap { command in
+                guard selected != "Favorites" || saved.contains(provider + ":" + command.name) else { return nil }
+                return (provider: provider, command: command)
+            }
+        }
+    }
+
+    @ViewBuilder private var commandGrid: some View {
+        let entries = commands
+        if entries.isEmpty { Text("Hold a command to add it to Favorites.").font(.caption).padding() }
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth))], spacing: 8) {
+            ForEach(Array(entries.enumerated()), id: \.offset) { entry in
+                commandTile(provider: entry.element.provider, command: entry.element.command)
+            }
+        }
+    }
+
+    private func commandTile(provider: String, command: AgentSlashCommand.Command) -> some View {
+        Button { send(command.name + " ") } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(command.name).font(.system(.caption, design: .monospaced)).lineLimit(1)
+                Text(selected == "Favorites" ? provider.capitalized : hint(command.name))
+                    .font(.caption2).foregroundStyle(PhrenTheme.textMuted).lineLimit(1)
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(8)
+                .background(PhrenTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
+        }.accessibilityIdentifier("terminal-command:\(provider):\(command.name)")
+            .accessibilityLabel(command.name + ", " + command.detail + ", " + provider.capitalized)
+            .disabled(!enabled)
+            .contextMenu {
+                let id = provider + ":" + command.name
+                let saved = favorites.split(separator: ",").map(String.init)
+                Button(saved.contains(id) ? "Remove from Favorites" : "Add to Favorites", systemImage: "star") {
+                    favorites = (saved.contains(id) ? saved.filter { $0 != id } : saved + [id]).joined(separator: ",")
+                }
+            }
     }
     private func shortcutLabel(_ title: String, _ detail: String, _ icon: String) -> some View {
         HStack {
