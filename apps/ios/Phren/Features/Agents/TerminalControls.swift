@@ -10,6 +10,9 @@ struct TerminalControls: View {
     @Binding var control: Bool
     @Binding var shortcuts: Bool
     let send: (String) -> Void
+    let attach: ([AgentAttachment]) -> Void
+    @State private var attachmentSource: ChatAttachmentSource?
+    @State private var pendingAttachments: [AgentAttachment] = []
     @State private var directions = false
     @State private var workspaces = false
     @State private var servers = false
@@ -56,9 +59,17 @@ struct TerminalControls: View {
         .popover(isPresented: $shortcuts) {
             TerminalShortcutMenu(source: source, enabled: enabled, send: send, close: { shortcuts = false },
                                  openWorkspaces: { shortcuts = false; workspaces = true },
-                                 openServers: { shortcuts = false; servers = true })
+                                 openServers: { shortcuts = false; servers = true },
+                                 upload: { source in shortcuts = false; attachmentSource = source })
                 .presentationBackground(PhrenTheme.chatPanel)
                 .presentationCompactAdaptation(.popover)
+        }
+        .sheet(item: $attachmentSource, onDismiss: {
+            if !pendingAttachments.isEmpty { let items = pendingAttachments; pendingAttachments = []; attach(items) }
+        }) { source in
+            ChatAttachmentPicker(initialSource: source, canAdd: pendingAttachments.count < 4, add: {
+                if pendingAttachments.count < 4 { pendingAttachments.append($0) }
+            }, context: nil)
         }
         .navigationDestination(isPresented: $workspaces) { HerdrWorkspacesView(hostID: hostID) }
         .navigationDestination(isPresented: $servers) { WebServersView(hostID: hostID) }
@@ -132,11 +143,12 @@ private struct TerminalShortcutMenu: View {
     let close: () -> Void
     let openWorkspaces: () -> Void
     let openServers: () -> Void
+    let upload: (ChatAttachmentSource) -> Void
     @State private var tab = ""
     @State private var settings = false
     @ScaledMetric(relativeTo: .caption) private var tileWidth = 75.0
     @AppStorage("terminal.favorites.v1") private var favorites = "codex:/model,claude:/compact,copilot:/help"
-    private let tabs = ["Favorites", "Codex", "Claude", "Copilot", "Herdr", "Keys"]
+    private let tabs = ["Favorites", "Uploads", "Codex", "Claude", "Copilot", "Herdr", "Keys"]
     private var selected: String { tab.isEmpty ? (tabs.first { $0.lowercased() == source } ?? "Keys") : tab }
 
     var body: some View {
@@ -146,7 +158,7 @@ private struct TerminalShortcutMenu: View {
                 TerminalGestureSettings()
             } else {
                 ScrollView { shortcutContent }.frame(maxHeight: 220)
-                if !["Keys", "Herdr"].contains(selected) {
+                if !["Keys", "Herdr", "Uploads"].contains(selected) {
                     Text("Insert a command, then use Enter when ready.").font(.caption2).foregroundStyle(PhrenTheme.textMuted)
                 }
             }
@@ -171,7 +183,11 @@ private struct TerminalShortcutMenu: View {
 
     private func tabButton(_ name: String) -> some View {
         Button { tab = name; settings = false } label: {
-            Group { if name == "Favorites" { Image(systemName: "star") } else { Text(name) } }
+            Group {
+                if name == "Favorites" { Image(systemName: "star") }
+                else if name == "Uploads" { Image(systemName: "square.and.arrow.up") }
+                else { Text(name) }
+            }
                 .font(.caption.weight(.semibold)).padding(.horizontal, 11).frame(height: 44)
                 .foregroundStyle(selected == name ? PhrenTheme.lavender : PhrenTheme.text)
                 .background(selected == name ? PhrenTheme.lavender.opacity(0.14) : .clear, in: Capsule())
@@ -180,7 +196,14 @@ private struct TerminalShortcutMenu: View {
     }
 
     @ViewBuilder private var shortcutContent: some View {
-        if selected == "Herdr" {
+        if selected == "Uploads" {
+            HStack(spacing: 8) {
+                uploadButton("Photos", "photo.on.rectangle", .photos)
+                if UIImagePickerController.isSourceTypeAvailable(.camera) { uploadButton("Camera", "camera", .camera) }
+                uploadButton("Files", "doc", .files)
+            }
+            Text("Attach to the agent in Phren chat.").font(.caption2).foregroundStyle(PhrenTheme.textMuted)
+        } else if selected == "Herdr" {
             VStack(spacing: 8) {
                 Button(action: openWorkspaces) {
                     shortcutLabel("Workspaces & panes", "Switch tabs, focus panes, and manage workspaces", "rectangle.split.3x1")
@@ -194,6 +217,17 @@ private struct TerminalShortcutMenu: View {
         } else {
             commandGrid
         }
+    }
+
+    private func uploadButton(_ title: String, _ symbol: String, _ source: ChatAttachmentSource) -> some View {
+        Button { upload(source) } label: {
+            VStack(spacing: 7) {
+                Image(systemName: symbol).font(.title3)
+                Text(title).font(.caption)
+            }
+            .frame(maxWidth: .infinity, minHeight: 70)
+            .background(PhrenTheme.surface.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+        }.accessibilityLabel("Attach from " + title)
     }
 
     private var editingKeys: some View {

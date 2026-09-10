@@ -10,6 +10,7 @@ struct TasksView: View {
                 TaskListView(scope: .all)
             }
             .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
@@ -37,8 +38,16 @@ struct TaskListView: View {
     @State private var showAdd = false
     @State private var editing: TaskListRow?
     @State private var reading: TaskListRow?
-    @State private var section: PhrenTask.Section = .active
+    @AppStorage("tasks.section.v1") private var section: PhrenTask.Section = .queue
     @State private var query = ""
+    @State private var showSearch = false
+    @State private var isSelecting = false
+    @State private var selectedIDs: Set<String> = []
+    @State private var isMoving = false
+    @FocusState private var searchFocused: Bool
+    @State private var priority: PhrenTask.Priority?
+    @State private var age: TaskAge = .all
+    @AppStorage("tasks.sort.v1") private var sort: TaskSort = .manual
 
     private var isProjectScoped: Bool {
         if case .project = scope { return true }
@@ -74,15 +83,7 @@ struct TaskListView: View {
                 }
             }
         }
-        // Pinned first, then rank (tasks.ts display order).
-        return result.filter {
-            query.isEmpty || $0.task.line.localizedCaseInsensitiveContains(query)
-                || ($0.task.context?.localizedCaseInsensitiveContains(query) ?? false)
-                || $0.project.localizedCaseInsensitiveContains(query)
-        }.sorted {
-            if ($0.task.pinned ?? false) != ($1.task.pinned ?? false) { return $0.task.pinned ?? false }
-            return ($0.task.rank ?? Int.max) < ($1.task.rank ?? Int.max)
-        }
+        return TaskBrowsing.rows(result, query: query, priority: priority, age: age, sort: sort)
     }
 
     private var queueRows: [TaskListRow] { rows(in: .queue) }
@@ -101,76 +102,79 @@ struct TaskListView: View {
     }
 
     var body: some View {
-        @Bindable var model = model
         VStack(spacing: 0) {
-            Picker("Task status", selection: $section) {
-                Text("Active").tag(PhrenTask.Section.active)
-                Text("Backlog").tag(PhrenTask.Section.queue)
-                Text("Done").tag(PhrenTask.Section.done)
+            controls
+            if showSearch && !isSelecting {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(PhrenTheme.textMuted)
+                    TextField("Search tasks", text: $query)
+                        .focused($searchFocused)
+                        .submitLabel(.search)
+                        .onSubmit { searchFocused = false }
+                        .accessibilityIdentifier("task-search-field")
+                    if !query.isEmpty {
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .accessibilityLabel("Clear search")
+                    }
+                }
+                .font(.callout)
+                .padding(10)
+                .background(PhrenTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.vertical, 8)
             PhrenList {
                 if !visibleRows.isEmpty {
-                    Section("\(section == .queue ? "Backlog" : section.rawValue) · \(visibleRows.count)") {
-                        taskRows(visibleRows)
-                    }
-                } else if section == .active && query.isEmpty {
+                    taskRows(visibleRows)
+                } else if section == .active && !hasFilters {
                     Section {
                         VStack(alignment: .leading, spacing: 10) {
                             Image(systemName: "checkmark.circle")
                                 .font(.title2).foregroundStyle(PhrenTheme.success)
                                 .accessibilityHidden(true)
-                            Text("No tasks marked active").font(.headline)
-                            Text("Check Agents for live sessions, or browse the backlog for planned work.")
+                            Text("No active tasks").font(.headline)
+                            Text("Start work from your backlog, or add a task.")
                                 .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
                         }
                         .padding(.vertical, 10)
                         if !queueRows.isEmpty {
                             Button("View backlog (\(queueRows.count))") { section = .queue }
                         }
-                        if !isProjectScoped {
-                            Button("View agents") { model.selectedTab = .agents }
-                        }
                     }
                 }
             }
+            .contentMargins(.top, 8, for: .scrollContent)
             .overlay {
-                if visibleRows.isEmpty && (section != .active || !query.isEmpty) {
-                    PhrenEmptyState(title: query.isEmpty ? "No \(section == .queue ? "backlog" : "completed") tasks" : "No matching tasks",
-                                    message: query.isEmpty ? emptyMessage : "Try another search or task status.")
+                if visibleRows.isEmpty && (section != .active || hasFilters) {
+                    VStack(spacing: 8) {
+                        PhrenEmptyState(title: hasFilters ? "No matching tasks" : "No \(section == .queue ? "backlog" : "completed") tasks",
+                                        message: hasFilters ? "Try another filter or task status." : emptyMessage)
+                        if hasFilters { Button("Clear filters", action: clearFilters) }
+                    }
                 }
             }
-            .searchable(text: $query, prompt: "Search tasks")
             .refreshable { await model.pullToRefresh() }
             .phrenScreen()
         }
         .background(PhrenTheme.bg)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isSelecting { selectionActions }
+        }
+        .onChange(of: section) { _, _ in selectedIDs.removeAll() }
+        .onChange(of: visibleRows.map(\.id)) { _, ids in selectedIDs.formIntersection(ids) }
         .toolbar {
-            if !isProjectScoped {
+            if !isReadOnlyScope {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Picker("Project", selection: $selectedProject) {
-                            Text("All projects").tag(String?.none)
-                            ForEach(projectNames, id: \.self) { name in
-                                Text(name).tag(String?.some(name))
-                            }
-                        }
-                        if model.hasMultipleStores {
-                            Picker("Store", selection: $model.storeFilter) {
-                                Text("All stores").tag(String?.none)
-                                ForEach(model.storeDescriptors) { store in
-                                    Text(store.displayName).tag(String?.some(store.id))
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease")
+                    Button(isSelecting ? "Cancel" : "Select") {
+                        isSelecting.toggle()
+                        selectedIDs.removeAll()
+                        searchFocused = false
                     }
+                    .accessibilityIdentifier("task-selection-mode")
+                    .disabled(isMoving || (!isSelecting && writableRows.isEmpty))
                 }
             }
-            if !isReadOnlyScope {
+            if !isReadOnlyScope && !isSelecting {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showAdd = true } label: { Image(systemName: "plus") }
                         .disabled(!isProjectScoped && addTargets.isEmpty)
@@ -188,6 +192,109 @@ struct TaskListView: View {
         }
     }
 
+    private var hasFilters: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || priority != nil || age != .all
+            || (!isProjectScoped && (selectedProject != nil || model.storeFilter != nil))
+    }
+
+    private func clearFilters() {
+        query = ""
+        priority = nil
+        age = .all
+        if !isProjectScoped {
+            selectedProject = nil
+            model.storeFilter = nil
+        }
+    }
+
+    private var controls: some View {
+        @Bindable var model = model
+        return HStack(spacing: 0) {
+            Menu {
+                Picker("Task status", selection: $section) {
+                    Text("Active").tag(PhrenTask.Section.active)
+                    Text("Backlog").tag(PhrenTask.Section.queue)
+                    Text("Done").tag(PhrenTask.Section.done)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(section == .queue ? "Backlog" : section.rawValue).fontWeight(.semibold)
+                    Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+                    Text(isSelecting ? "\(selectedIDs.count)/\(visibleRows.count)" : visibleRows.count.formatted())
+                        .foregroundStyle(PhrenTheme.textMuted)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("task-status")
+            .disabled(isMoving)
+            Spacer(minLength: 4)
+            if isSelecting {
+                Button(selectedIDs.count == writableRows.count ? "Deselect all" : "Select all") {
+                    selectedIDs = selectedIDs.count == writableRows.count ? [] : Set(writableRows.map(\.id))
+                }
+                .disabled(isMoving)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 8)
+            } else {
+                Button {
+                    showSearch.toggle()
+                    searchFocused = showSearch
+                    if !showSearch { query = "" }
+                } label: {
+                    Image(systemName: "magnifyingglass").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(showSearch ? "Hide task search" : "Search tasks")
+                .accessibilityIdentifier("task-search-toggle")
+                Menu {
+                    Picker("Priority", selection: $priority) {
+                        Text("Any priority").tag(PhrenTask.Priority?.none)
+                        ForEach(PhrenTask.Priority.allCases, id: \.self) { value in
+                            Text(value.rawValue.capitalized).tag(PhrenTask.Priority?.some(value))
+                        }
+                    }
+                    Picker("Created", selection: $age) {
+                        ForEach(TaskAge.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    if !isProjectScoped {
+                        Picker("Project", selection: $selectedProject) {
+                            Text("All projects").tag(String?.none)
+                            ForEach(projectNames, id: \.self) { Text($0).tag(String?.some($0)) }
+                        }
+                        if model.hasMultipleStores {
+                            Picker("Store", selection: $model.storeFilter) {
+                                Text("All stores").tag(String?.none)
+                                ForEach(model.storeDescriptors) { Text($0.displayName).tag(String?.some($0.id)) }
+                            }
+                        }
+                    }
+                    if hasFilters { Button("Clear filters", action: clearFilters) }
+                } label: {
+                    Image(systemName: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(hasFilters ? "Task filters, applied" : "Task filters")
+                .accessibilityIdentifier("task-filters")
+                Menu {
+                    Picker("Sort tasks", selection: $sort) {
+                        ForEach(TaskSort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Sort tasks, \(sort.rawValue)")
+                .accessibilityIdentifier("task-sort")
+            }
+        }
+        .font(.subheadline)
+        .buttonStyle(.plain)
+        .foregroundStyle(PhrenTheme.accent)
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("task-controls")
+    }
+
     /// The + button is disabled cross-store when no (store, project) pair is
     /// writable — explain why, rather than leaving the empty state silent
     /// about a control the user can see but can't press.
@@ -198,81 +305,110 @@ struct TaskListView: View {
         return "Add a task with the + button."
     }
 
+    private var writableRows: [TaskListRow] {
+        visibleRows.filter { model.canWrite(storeId: $0.storeId, project: $0.project) }
+    }
+
+    private var selectionActions: some View {
+        HStack(spacing: 8) {
+            ForEach(TaskMove.allCases, id: \.self) { action in
+                Button {
+                    move(writableRows.filter { selectedIDs.contains($0.id) }, using: action)
+                } label: {
+                    Label(action.rawValue, systemImage: action.symbol)
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .accessibilityIdentifier("task-bulk-\(action.rawValue)")
+                .disabled(selectedIDs.isEmpty || isMoving || section == action.section)
+            }
+        }
+        .padding(.horizontal, 12)
+        .background(PhrenTheme.surface)
+        .tint(PhrenTheme.accent)
+    }
+
+    private func select(_ row: TaskListRow) {
+        guard !isMoving, model.canWrite(storeId: row.storeId, project: row.project) else { return }
+        if !selectedIDs.insert(row.id).inserted { selectedIDs.remove(row.id) }
+    }
+
     @ViewBuilder
     private func taskRows(_ items: [TaskListRow]) -> some View {
         ForEach(items) { row in
+            let canWrite = !isMoving && model.canWrite(storeId: row.storeId, project: row.project)
             TaskRow(
                 row: row,
                 showProject: !isProjectScoped,
                 showStore: !isProjectScoped && model.hasMultipleStores,
-                canWrite: model.canWrite(storeId: row.storeId, project: row.project),
-                onRead: { reading = row }
+                canWrite: canWrite,
+                selection: isSelecting ? selectedIDs.contains(row.id) : nil,
+                onRead: { if isSelecting { select(row) } else { reading = row } }
             ) {
-                toggle(row)
+                if isSelecting { select(row) }
+                else { move([row], using: row.task.checked ? .start : .done) }
             }
-            .swipeActions(edge: .leading) {
-                Button {
-                    toggle(row)
-                } label: {
-                    row.task.checked
-                        ? Label("Reopen", systemImage: "arrow.uturn.backward")
-                        : Label("Complete", systemImage: "checkmark")
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                if canWrite && !isSelecting {
+                    if row.task.section != .active {
+                        Button { move([row], using: .start) } label: { Label("Start", systemImage: "play") }
+                            .tint(PhrenTheme.accent)
+                    }
+                    if row.task.section != .done {
+                        Button { move([row], using: .done) } label: { Label("Done", systemImage: "checkmark") }
+                            .tint(PhrenTheme.success)
+                    }
                 }
-                .tint(row.task.checked ? .blue : .green)
             }
-            .swipeActions(edge: .trailing) {
-                Button(role: .destructive) {
-                    delete(row)
-                } label: {
-                    Label("Delete", systemImage: "trash")
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if canWrite && !isSelecting {
+                    Button(role: .destructive) { delete(row) } label: { Label("Delete", systemImage: "trash") }
+                    Button { editing = row } label: { Label("Edit", systemImage: "pencil") }
+                        .tint(PhrenTheme.accent)
+                    if row.task.section != .queue {
+                        Button { move([row], using: .backlog) } label: { Label("Backlog", systemImage: "tray") }
+                            .tint(PhrenTheme.textDim)
+                    }
                 }
-                Button {
-                    editing = row
-                } label: {
-                    Label("Edit", systemImage: "pencil")
-                }
-                .tint(.blue)
             }
             .contextMenu {
-                Button {
-                    toggle(row)
-                } label: {
-                    row.task.checked
-                        ? Label("Reopen", systemImage: "arrow.uturn.backward")
-                        : Label("Complete", systemImage: "checkmark")
-                }
-                Button {
-                    editing = row
-                } label: {
-                    Label("Edit", systemImage: "pencil")
-                }
-                Button(role: .destructive) {
-                    delete(row)
-                } label: {
-                    Label("Delete", systemImage: "trash")
+                if canWrite && !isSelecting {
+                    ForEach(TaskMove.allCases.filter { $0.section != row.task.section }, id: \.self) { action in
+                        Button { move([row], using: action) } label: { Label(action.rawValue, systemImage: action.symbol) }
+                    }
+                    Button { editing = row } label: { Label("Edit", systemImage: "pencil") }
+                    Button(role: .destructive) { delete(row) } label: { Label("Delete", systemImage: "trash") }
                 }
             }
         }
     }
 
-    /// Checking a Done row un-checks it back into Active — TasksFile.update
-    /// already un-checks on section move, so this is just a section change,
-    /// not a fresh completeTask.
-    private func toggle(_ row: TaskListRow) {
+    private func move(_ rows: [TaskListRow], using action: TaskMove) {
+        guard !isMoving, !rows.isEmpty else { return }
+        isMoving = true
+        let wasSelecting = isSelecting
         Task {
-            if row.task.checked {
-                await model.perform(.updateTask(
-                    project: row.project,
-                    match: row.task.stableId ?? row.task.line,
-                    text: nil,
-                    priority: nil,
-                    section: PhrenTask.Section.active.rawValue
-                ), in: row.storeId)
-            } else {
-                await model.perform(.completeTask(
-                    project: row.project,
-                    match: row.task.stableId ?? row.task.line
-                ), in: row.storeId)
+            var failed: Set<String> = []
+            var failureMessage: String?
+            for row in rows {
+                do {
+                    guard model.canWrite(storeId: row.storeId, project: row.project) else {
+                        throw StoreWriteError.readOnly(row.storeName)
+                    }
+                    try await model.enqueue(action.operation(for: row), in: row.storeId)
+                } catch {
+                    failed.insert(row.id)
+                    failureMessage = error.localizedDescription
+                }
+            }
+            await model.refresh()
+            selectedIDs = failed
+            model.lastActionError = failureMessage.map { "\(failed.count) task(s) couldn't move. \($0)" }
+            isMoving = false
+            if wasSelecting && failed.isEmpty {
+                isSelecting = false
+                section = action.section
             }
         }
     }
@@ -371,26 +507,28 @@ struct TaskRow: View {
     let showProject: Bool
     let showStore: Bool
     let canWrite: Bool
+    var selection: Bool? = nil
     let onRead: () -> Void
     let onToggle: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Button(action: onToggle) {
-                Image(systemName: row.task.checked ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(row.task.checked ? .green : .secondary)
+                Image(systemName: (selection ?? row.task.checked) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selection != nil ? PhrenTheme.accent : (row.task.checked ? PhrenTheme.success : PhrenTheme.textMuted))
                     .font(.title3)
             }
             .buttonStyle(.plain)
             .disabled(!canWrite)
-            .accessibilityLabel(row.task.checked ? "Reopen task" : "Complete task")
+            .accessibilityLabel(selection.map { $0 ? "Deselect task" : "Select task" } ?? (row.task.checked ? "Reopen task" : "Complete task"))
+            .accessibilityIdentifier("task-select:\(row.id)")
 
             Button(action: onRead) {
               VStack(alignment: .leading, spacing: 5) {
                 Text(.init(displayLine))
                     .font(.callout)
                     .strikethrough(row.task.checked)
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
                     if showProject {
@@ -409,12 +547,11 @@ struct TaskRow: View {
                         Text("#\(issue)").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
-                if let context = row.task.context {
-                    Text(context)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(TaskBrowsing.creationDate(row.task.createdAt).map {
+                    "Created " + $0.formatted(date: .abbreviated, time: .omitted)
+                } ?? "Date unknown")
+                    .font(.caption2)
+                    .foregroundStyle(PhrenTheme.textMuted)
               }
             }
             .buttonStyle(.plain)
@@ -467,6 +604,9 @@ private struct TaskDetailsSheet: View {
                     LabeledContent("Project", value: row.project)
                     LabeledContent("Store", value: row.storeId)
                     LabeledContent("Status", value: row.task.section == .queue ? "Backlog" : row.task.section.rawValue)
+                    LabeledContent("Created", value: TaskBrowsing.creationDate(row.task.createdAt).map {
+                        $0.formatted(date: .long, time: .shortened)
+                    } ?? "Date unknown")
                     if let priority = row.task.priority { LabeledContent("Priority", value: priority.rawValue) }
                 }
             }

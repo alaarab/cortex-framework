@@ -236,6 +236,9 @@ final class LiveHostMonitor {
                 if previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--session-details-removed") {
                     return try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
                 }
+                if ProcessInfo.processInfo.arguments.contains("--terminal-uploads-fixture") {
+                    return try LiveWorkspaces.read(Data(#"{"kind":"herdr","focus":{"workspaceID":"w8","tabID":"w8:t1","paneID":"w8:p1"},"groups":[{"id":"w7","label":"Phone work","children":[{"id":"w7:t9","label":"1","title":"Original tab","agent":"codex"}]},{"id":"w8","label":"Other work","children":[{"id":"w8:t1","label":"1","title":"Current terminal tab","agent":"codex"}]}]}"#.utf8))
+                }
                 return try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w7","label":"Phone work","children":[{"id":"w7:t9","label":"1","title":"Polish the phone app","agent":"codex","agentStatus":"working","cwd":"/work/phone/src","agentPaneCount":2,"paneCount":3}]},{"id":"w8","label":"Other work","children":[{"id":"w8:t1","label":"1","title":"Choose the deployment target","agent":"claude","agentStatus":"waiting","cwd":"/work/other"}]},{"id":"w9","label":"Shell","children":[{"id":"w9:t1","label":"1"}]}]}"#.utf8))
             }
             if ProcessInfo.processInfo.arguments.contains("--observed-live-session-ids") {

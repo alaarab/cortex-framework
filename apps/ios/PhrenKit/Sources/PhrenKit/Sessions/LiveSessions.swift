@@ -40,8 +40,14 @@ public struct LiveWorkspaces: Decodable, Equatable, Sendable {
         public let label: String
         public let children: [Tab]
     }
+    public struct Focus: Decodable, Equatable, Sendable {
+        public let workspaceID: String
+        public let tabID: String
+        public let paneID: String
+    }
     public let kind: String
     public let groups: [Group]
+    public let focus: Focus?
 
     public static func read(_ data: Data) throws -> Self {
         guard data.count <= 1_048_576 else { throw PhrenKitError.validation("The session response is too large.") }
@@ -59,6 +65,12 @@ public struct LiveWorkspaces: Decodable, Equatable, Sendable {
                 guard !tab.id.isEmpty, tabIDs.insert(tab.id).inserted else {
                     throw PhrenKitError.validation("The hook returned repeated or empty tab IDs.")
                 }
+            }
+        }
+        if let focus = result.focus {
+            guard [focus.workspaceID, focus.tabID, focus.paneID].allSatisfy(AgentChatTarget.validID),
+                  result.groups.contains(where: { $0.id == focus.workspaceID && $0.children.contains(where: { $0.id == focus.tabID }) }) else {
+                throw PhrenKitError.validation("The focused Herdr tab changed. Refresh the computer.")
             }
         }
         return result

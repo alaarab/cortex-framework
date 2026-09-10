@@ -86,9 +86,34 @@ final class TerminalInteractionTests: XCTestCase {
     }
 
     @MainActor
+    func testCtrlHoldUploadsImageToTheCurrentTerminalAgent() throws {
+        let app = launch("--terminal-uploads-fixture")
+        app.buttons["Ctrl"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["Uploads shortcuts"].waitForExistence(timeout: 5))
+        app.buttons["Uploads shortcuts"].tap()
+        app.buttons["Attach from Photos"].tap()
+        XCTAssertTrue(app.buttons["Add test image"].waitForExistence(timeout: 5))
+        app.buttons["Add test image"].tap()
+        XCTAssertTrue(app.buttons["Preview Screenshot.png"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Other work"), "Resolve current focus, not the first workspace or original terminal tab")
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Mac"))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Received in codex")).firstMatch.exists)
+        capture(app, "Image draft opened from Herdr on the current agent")
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.buttons["View attached Screenshot.png"].waitForExistence(timeout: 8))
+        app.buttons["chat-close"].tap()
+        XCTAssertTrue(app.otherElements["herdr-terminal-header"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+    }
+
+    @MainActor
     func testPinchReflowsHerdrAndKeepsLinksAndSwitchAccurate() throws {
         let app = launch("--terminal-controls-fixture")
         let terminal = app.descendants(matching: .any).matching(identifier: "herdr-terminal").firstMatch
+        let header = app.otherElements["herdr-terminal-header"]
+        XCTAssertLessThanOrEqual(header.frame.height, 50)
+        XCTAssertLessThanOrEqual(terminal.frame.minY - header.frame.maxY, 20, "Accessibility bounds include the first terminal cell inset")
+        XCTAssertFalse(app.navigationBars["Herdr terminal"].exists)
         let before = try state(app)
         terminal.pinch(withScale: 0.5, velocity: -1)
         let zoomedOut = try state(app)
@@ -138,7 +163,7 @@ final class TerminalInteractionTests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.3)).tap()
         XCTAssertTrue(try state(app).input.contains("\u{1B}[A\u{1B}[C"))
         capture(app, "One compact terminal toolbar with keyboard")
-        app.navigationBars["Herdr terminal"].buttons.element(boundBy: 0).tap()
+        app.buttons["herdr-terminal-back"].tap()
         XCTAssertTrue(app.tabBars.buttons["Agents"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.tabBars.buttons["Agents"].isHittable, "Leaving terminal restores app navigation")
     }

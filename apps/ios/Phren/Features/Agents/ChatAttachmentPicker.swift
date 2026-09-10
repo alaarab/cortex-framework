@@ -47,12 +47,20 @@ enum ChatAttachmentPreparation {
     }
 }
 
+enum ChatAttachmentSource: String, Identifiable {
+    case photos, camera, files
+    var id: String { rawValue }
+}
+
 struct ChatAttachmentPicker: View {
+    var initialSource: ChatAttachmentSource? = nil
     let canAdd: Bool
     let add: (AgentAttachment) -> Void
     let context: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var photos: [PhotosPickerItem] = []
+    @State private var showPhotos = false
+    @State private var openedInitialSource = false
     @State private var files = false
     @State private var camera = false
     @State private var busy = false
@@ -61,9 +69,8 @@ struct ChatAttachmentPicker: View {
         NavigationStack {
             PhrenList {
                 Section {
-                    PhotosPicker(selection: $photos, maxSelectionCount: 4, matching: .images) {
-                        Label("Photos", systemImage: "photo.on.rectangle")
-                    }.disabled(!canAdd || busy)
+                    Button("Photos", systemImage: "photo.on.rectangle") { showPhotos = true }
+                        .disabled(!canAdd || busy)
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
                         Button("Camera", systemImage: "camera") { camera = true }.disabled(!canAdd || busy)
                     }
@@ -101,6 +108,21 @@ struct ChatAttachmentPicker: View {
             }
             .navigationTitle("Add attachment").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .photosPicker(isPresented: $showPhotos, selection: $photos, maxSelectionCount: 4, matching: .images)
+            .task {
+                guard !openedInitialSource, let initialSource, canAdd else { return }
+                openedInitialSource = true
+                #if DEBUG && targetEnvironment(simulator)
+                if AgentChatFixture.enabled && ProcessInfo.processInfo.arguments.contains("--terminal-uploads-fixture") { return }
+                #endif
+                // Finish presenting this sheet before opening the system picker.
+                do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+                switch initialSource {
+                case .photos: showPhotos = true
+                case .camera: camera = UIImagePickerController.isSourceTypeAvailable(.camera)
+                case .files: files = true
+                }
+            }
             .fileImporter(isPresented: $files, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
                 do {
                     let urls = try result.get()

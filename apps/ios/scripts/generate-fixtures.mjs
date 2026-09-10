@@ -125,8 +125,9 @@ fs.writeFileSync(path.join(store, "phren.root.yaml"), "installMode: shared\nsync
 // but `swift-writes/` is the *other* direction's committed corpus
 // (SwiftWritesFixturesTests.swift, Task 2 bidirectional conformance): it is
 // regenerated only by `PHREN_REGENERATE_SWIFT_FIXTURES=1 swift test`, never
-// by this script, so it must survive the wipe untouched.
-const PRESERVE_ON_WIPE = new Set(["swift-writes"]);
+// by this script, so it must survive the wipe untouched. The hand-authored
+// Hook protocol corpus is shared by Swift and TypeScript and must survive too.
+const PRESERVE_ON_WIPE = new Set(["swift-writes", "hook-events.json"]);
 fs.mkdirSync(fixturesDir, { recursive: true });
 for (const entry of fs.readdirSync(fixturesDir)) {
   if (PRESERVE_ON_WIPE.has(entry)) continue;
@@ -297,9 +298,9 @@ writeJson("notes-parsed.json", parsedNotes.data.map(({ path: _p, ...rest }) => r
 withFixedIds(["aa853063"], () =>
   must(tasks.addTask(store, project, "Ship the iOS app [high]", { createdAt: "2026-07-20T10:00:00.000Z" }), "add task 1"));
 withFixedIds(["58b9b427"], () =>
-  must(tasks.addTask(store, project, "Write fixture generator"), "add task 2"));
+  must(tasks.addTask(store, project, "Write fixture generator", { createdAt: "2026-07-21T10:00:00.000Z" }), "add task 2"));
 withFixedIds(["013d708f"], () =>
-  must(tasks.addTask(store, project, "Investigate flaky sync test [low]"), "add task 3"));
+  must(tasks.addTask(store, project, "Investigate flaky sync test [low]", { createdAt: "2026-07-22T10:00:00.000Z" }), "add task 3"));
 snapshot("tasks-after-add.md", `${project}/tasks.md`);
 
 must(tasks.completeTask(store, project, "Write fixture generator"), "complete task");
@@ -383,7 +384,7 @@ snapshot("findings-nonstandard-tag-after-edit.md", `${project}/FINDINGS.md`);
 // every time text changes — pin the actual (documented-as-rough) behaviour:
 // a rename with no re-supplied tags silently drops both.
 withFixedIds(["0000b001"], () =>
-  must(tasks.addTask(store, project, "Ship urgent fix [high]"), "add task 4 (pin/priority gap)"));
+  must(tasks.addTask(store, project, "Ship urgent fix [high]", { createdAt: "2026-07-23T10:00:00.000Z" }), "add task 4 (pin/priority gap)"));
 must(tasks.pinTask(store, project, "Ship urgent fix"), "pin task 4");
 snapshot("tasks-pinned-before-text-edit.md", `${project}/tasks.md`);
 must(tasks.updateTask(store, project, "Ship urgent fix", { text: "Ship urgent fix (renamed)" }), "text-only update on pinned+prioritised task");

@@ -20,15 +20,30 @@ struct AgentConversationLink<LabelContent: View>: View {
 
 struct AgentChatSheet: View {
     @State private var session: LiveAgentSession
-    init(session: LiveAgentSession) { _session = State(initialValue: session) }
+    @State private var incomingAttachments: [AgentAttachment]
+    private let initialSessionID: LiveAgentSession.ID
+    private let initialPane: AgentChatPanes.Pane?
+    init(session: LiveAgentSession, initialPane: AgentChatPanes.Pane? = nil, attachments: [AgentAttachment] = []) {
+        _session = State(initialValue: session)
+        _incomingAttachments = State(initialValue: attachments)
+        initialSessionID = session.id
+        self.initialPane = initialPane
+    }
     var body: some View {
-        NavigationStack { AgentChatView(session: session, switchSession: { session = $0 }).id(session.id) }
+        NavigationStack {
+            AgentChatView(session: session, switchSession: { session = $0 },
+                          initialPane: session.id == initialSessionID ? initialPane : nil,
+                          incomingAttachments: $incomingAttachments).id(session.id)
+        }
     }
 }
 
 struct AgentChatView: View {
     let session: LiveAgentSession
     let switchSession: (LiveAgentSession) -> Void
+    let initialPane: AgentChatPanes.Pane?
+    @Binding var incomingAttachments: [AgentAttachment]
+    @State private var initialized = false
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
@@ -58,6 +73,20 @@ struct AgentChatView: View {
     // transcript moves; either measurement can arrive first during layout.
     private var atBottom: Bool { bottomPosition <= scrollHeight + 60 }
 
+    private func acceptIncomingAttachments() {
+        guard !incomingAttachments.isEmpty, !model.restoringDraft, let initialPane,
+              let expected = try? initialPane.target(hostID: session.host.id, workspaceID: session.workspaceID,
+                                                    tabID: session.tab.id, muxID: session.host.muxID),
+              model.target == expected else { return }
+        guard model.attachments.count + incomingAttachments.count <= 4 else {
+            model.deliveryError = "Make room for \(incomingAttachments.count) attachment(s). Each message can include four."
+            return
+        }
+        let items = incomingAttachments
+        incomingAttachments = []
+        for item in items { model.add(item) }
+    }
+
     private var currentHost: LiveHost? {
         (try? LiveSessionPreferences.read(hostData))?.hosts.first { $0.id == session.host.id }
     }
@@ -77,7 +106,6 @@ struct AgentChatView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         LazyVStack(alignment: .leading, spacing: 12) {
-                            if model.loading && model.messages.isEmpty { ProgressView("Opening conversation…").frame(maxWidth: .infinity).padding(.top, 40) }
                             if model.target == nil && !model.loading {
                                 Text("Choose an agent").font(.title2.weight(.semibold))
                                 ForEach(model.panes) { pane in
@@ -90,7 +118,7 @@ struct AgentChatView: View {
                                         }.buttonStyle(.plain).accessibilityIdentifier("chat-pane:\(pane.id)")
                                     } else {
                                         NavigationLink {
-                                            HerdrTerminalView(host: session.host, session: session, paneID: pane.id).toolbar(.visible, for: .navigationBar)
+                                            HerdrTerminalView(host: session.host, session: session, paneID: pane.id)
                                         } label: {
                                             Label("\(pane.displayTitle) · Open terminal", systemImage: "terminal").font(.subheadline)
                                         }
@@ -181,6 +209,14 @@ struct AgentChatView: View {
                         .onChange(of: geometry.size.height) { _, height in scrollHeight = height }
                 })
                 .onPreferenceChange(ChatBottomPosition.self) { bottomPosition = $0 }
+                .overlay {
+                    if model.loading && model.messages.isEmpty {
+                        ProgressView()
+                            .tint(PhrenTheme.accent)
+                            .accessibilityLabel("Opening conversation")
+                            .accessibilityIdentifier("chat-opening-spinner")
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) {
                     if !atBottom || model.history.hasNewer {
                         Button {
@@ -213,7 +249,15 @@ struct AgentChatView: View {
         .navigationTitle("Agent chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear { visible = true }
+        .onAppear {
+            if !initialized {
+                initialized = true
+                if let initialPane { model.choose(initialPane, session: session) }
+            }
+            visible = true
+        }
+        .onChange(of: model.restoringDraft) { _, _ in acceptIncomingAttachments() }
+        .onChange(of: model.attachments.count) { _, _ in acceptIncomingAttachments() }
         .onDisappear { visible = false; sendTask?.cancel(); historyTask?.cancel(); model.flushDrafts() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { sendTask?.cancel(); historyTask?.cancel(); model.flushDrafts() } }
         .onChange(of: currentHost) { _, _ in sendTask?.cancel(); historyTask?.cancel() }
@@ -231,7 +275,6 @@ struct AgentChatView: View {
         .navigationDestination(item: $commandDestination) { destination in
             HerdrTerminalView(host: session.host, session: session, target: destination.menu ? model.target : nil,
                               paneID: destination.paneID, commandMenu: destination.menu)
-                .toolbar(.visible, for: .navigationBar)
         }
         .onChange(of: commandDestination) { previous, current in
             if previous != nil && current == nil {
@@ -365,7 +408,7 @@ struct AgentChatView: View {
                     .lineLimit(1).accessibilityIdentifier("chat-location")
             }.frame(maxWidth: .infinity, alignment: .leading)
             NavigationLink {
-                HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar)
+                HerdrTerminalView(host: session.host, session: session, target: model.target)
             } label: {
                 Image(systemName: "terminal").font(.system(size: 17)).frame(width: 40, height: 44).contentShape(Rectangle())
                     .foregroundStyle(PhrenTheme.cyan)
@@ -383,15 +426,15 @@ struct AgentChatView: View {
 
     private var chatOptions: some View {
         Menu {
-            NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar) } label: { Label("Herdr terminal", systemImage: "terminal") }
-            NavigationLink { HerdrWorkspacesView(hostID: session.host.id).toolbar(.visible, for: .navigationBar) } label: { Label("Herdr workspaces", systemImage: "rectangle.split.3x1") }
+            NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target) } label: { Label("Herdr terminal", systemImage: "terminal") }
+            NavigationLink { HerdrWorkspacesView(hostID: session.host.id) } label: { Label("Herdr workspaces", systemImage: "rectangle.split.3x1") }
             if let target = model.target {
-                NavigationLink { AgentDiffView(session: session, target: target).toolbar(.visible, for: .navigationBar) } label: { Label("Repository changes", systemImage: "arrow.triangle.branch") }
+                NavigationLink { AgentDiffView(session: session, target: target) } label: { Label("Repository changes", systemImage: "arrow.triangle.branch") }
             }
             if let project {
-                NavigationLink("Project memory") { ProjectDetailView(storeId: project.storeID, project: project.name).toolbar(.visible, for: .navigationBar) }
-                NavigationLink("Project skills") { SkillsView(project: project.name, storeId: project.storeID).toolbar(.visible, for: .navigationBar) }
-                NavigationLink("Explore graph") { GraphView(focusProject: project.name, initialStoreId: project.storeID).toolbar(.visible, for: .navigationBar) }
+                NavigationLink("Project memory") { ProjectDetailView(storeId: project.storeID, project: project.name) }
+                NavigationLink("Project skills") { SkillsView(project: project.name, storeId: project.storeID) }
+                NavigationLink("Explore graph") { GraphView(focusProject: project.name, initialStoreId: project.storeID) }
             }
             Button("Slash commands", systemImage: "slash.circle") { openCommandMenu() }
                 .disabled(model.target == nil || model.sending)
@@ -462,7 +505,7 @@ struct AgentChatView: View {
                                  choose: { model.draft = $0 + " " }, openAll: openCommandMenu)
             }
             if model.needsAnswer {
-                NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar) } label: {
+                NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target) } label: {
                     Label(model.approval != nil || model.question != nil ? "Or answer in Herdr" : "Answer in Herdr terminal", systemImage: "terminal")
                         .font(.caption).foregroundStyle(PhrenTheme.warning)
                 }.accessibilityIdentifier("chat-answer-terminal")
@@ -480,7 +523,7 @@ struct AgentChatView: View {
                         Image(systemName: "plus").font(.system(size: 21, weight: .light)).frame(width: 36, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel("Add attachment").disabled(model.target == nil || model.sending)
                     NavigationLink {
-                        HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar)
+                        HerdrTerminalView(host: session.host, session: session, target: model.target)
                     } label: {
                         Image(systemName: "terminal").font(.system(size: 18)).frame(width: 44, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel("Open Herdr terminal").accessibilityIdentifier("chat-composer-terminal")

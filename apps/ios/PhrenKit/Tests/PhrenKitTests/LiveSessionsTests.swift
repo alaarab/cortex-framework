@@ -15,6 +15,17 @@ final class LiveSessionsTests: XCTestCase {
         XCTAssertThrowsError(try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"a","children":[]},{"id":"w1","label":"b","children":[]}]}"#.utf8)))
     }
 
+    func testFocusIsOptionalAndMustReferenceTheReportedWorkspaceAndTab() throws {
+        XCTAssertNil(try LiveWorkspaces.read(fixture).focus)
+        var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture) as? [String: Any])
+        raw["focus"] = ["workspaceID": "wA", "tabID": "wA:t2", "paneID": "wA:p1"]
+        XCTAssertEqual(try LiveWorkspaces.read(JSONSerialization.data(withJSONObject: raw)).focus?.paneID, "wA:p1")
+        raw["focus"] = ["workspaceID": "wB", "tabID": "wA:t2", "paneID": "wA:p1"]
+        XCTAssertThrowsError(try LiveWorkspaces.read(JSONSerialization.data(withJSONObject: raw)))
+        raw["focus"] = ["workspaceID": "wA", "tabID": "wA:t2", "paneID": "../wrong"]
+        XCTAssertThrowsError(try LiveWorkspaces.read(JSONSerialization.data(withJSONObject: raw)))
+    }
+
     func testReadableTitlesAndConservativeActivity() throws {
         let value = try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone","children":[{"id":"w1:t1","label":"1","title":"  Build the phone app  ","agentStatus":"blocked","agentPaneCount":2,"paneCount":3},{"id":"w1:t2","label":"Shell","title":"  ","agentStatus":"future-state"}]}]}"#.utf8))
         let tabs = value.groups[0].children

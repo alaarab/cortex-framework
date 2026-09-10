@@ -248,22 +248,18 @@ struct HerdrTerminalView: View {
     var paneID: String? = nil
     var commandMenu = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
     @State private var model = HerdrTerminalModel()
     @State private var visible = false
     @State private var shortcuts = false
     @State private var reconnect = UUID()
+    @State private var uploadRequest: TerminalUploadRequest?
     private var currentHost: LiveHost? { (try? LiveSessionPreferences.read(hostData))?.hosts.first { $0.id == host.id } }
     private var active: Bool { visible && scenePhase == .active && currentHost == host }
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Circle().fill(model.connected && active ? PhrenTheme.cyan : PhrenTheme.textDim).frame(width: 6, height: 6)
-                Text("\(host.name) · \(host.herdrSession ?? "default")").lineLimit(1)
-                Spacer()
-                if model.reconnecting { Text("Reconnecting…").lineLimit(1) }
-                if !model.connected && model.error == nil && active { ProgressView().controlSize(.small) }
-            }.font(.caption).foregroundStyle(PhrenTheme.textMuted).padding(12)
+            header
             if let error = model.error {
                 Label(error, systemImage: "wifi.exclamationmark").font(.caption).foregroundStyle(PhrenTheme.warning).padding(.horizontal, 12).padding(.bottom, 8)
             }
@@ -271,7 +267,8 @@ struct HerdrTerminalView: View {
             HerdrTerminalSurface(model: model).padding(.horizontal, 4)
             TerminalControls(terminal: model.terminal, hostID: host.id,
                              source: target?.source ?? session?.tab.agent ?? "", enabled: model.connected && active, control: $model.control,
-                             shortcuts: $shortcuts, send: model.input)
+                             shortcuts: $shortcuts, send: model.input,
+                             attach: { uploadRequest = TerminalUploadRequest(attachments: $0) })
                 .padding(.bottom, 6)
         }
         #if DEBUG && targetEnvironment(simulator)
@@ -282,13 +279,13 @@ struct HerdrTerminalView: View {
             }
         }
         #endif
-        .background(PhrenTheme.bgSunken).navigationTitle("Herdr terminal").navigationBarTitleDisplayMode(.inline)
+        .background(PhrenTheme.bgSunken)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .onChange(of: PhrenAppearance.shared.palette) { _, _ in model.applyAppearance() }
         .toolbar(.hidden, for: .tabBar)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Reconnect", systemImage: "arrow.clockwise") { reconnect = UUID() }.disabled(!active)
-            }
+        .sheet(item: $uploadRequest) { request in
+            TerminalUploadFlow(host: host, attachments: request.attachments)
         }
         .onAppear {
             visible = true
@@ -302,5 +299,43 @@ struct HerdrTerminalView: View {
             if active { await model.run(host: host, session: session, target: target, paneID: paneID, commandMenu: commandMenu) }
         }
     }
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium))
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Back")
+            .accessibilityIdentifier("herdr-terminal-back")
+            Circle().fill(model.connected && active ? PhrenTheme.accent : PhrenTheme.textDim)
+                .frame(width: 6, height: 6)
+                .accessibilityLabel(model.connected && active ? "Connected" : "Disconnected")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(host.name).font(.subheadline.weight(.medium)).lineLimit(1)
+                if let name = host.herdrSession, name != "default" {
+                    Text(name).font(.caption2).foregroundStyle(PhrenTheme.textMuted).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            if model.reconnecting {
+                Text("Reconnecting…").font(.caption2).foregroundStyle(PhrenTheme.warning).lineLimit(1)
+            } else if !model.connected && model.error == nil && active {
+                ProgressView().controlSize(.small)
+            }
+            Button { reconnect = UUID() } label: {
+                Image(systemName: "arrow.clockwise").font(.system(size: 18))
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Reconnect")
+            .disabled(!active)
+        }
+        .foregroundStyle(PhrenTheme.text)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("herdr-terminal-header")
+    }
+
     private struct Run: Equatable { let active: Bool; let reconnect: UUID }
 }

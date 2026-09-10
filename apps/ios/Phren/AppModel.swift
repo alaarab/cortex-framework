@@ -511,6 +511,10 @@ final class AppModel {
                     }
                     if cleaned != data { defaults.set(cleaned, forKey: "sessions.live.preferences.v1") }
                 }
+                if ProcessInfo.processInfo.arguments.contains("--workflow-fixture") {
+                    defaults.set("Queue", forKey: "tasks.section.v1")
+                    defaults.set("Task order", forKey: "tasks.sort.v1")
+                }
                 for owner in ["sample", "team"] {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ui-tests-\(UUID().uuidString)")
                     let store = try LocalStore(rootDirectory: directory, owner: owner, repo: "brain", branch: "main")
@@ -541,9 +545,9 @@ final class AppModel {
                         # Demo tasks
                         ## Active
                         ## Queue
-                        - [ ] \(longTask) [high] <!-- bid:dead0001 -->
+                        - [ ] \(longTask) [high] <!-- bid:dead0001 created:2026-01-01T12:00:00.000Z -->
                           Context: Keep the full plan available from task details.
-                        - [ ] A short follow-up task <!-- bid:dead0002 -->
+                        - [ ] A short follow-up task <!-- bid:dead0002 created:\(Date().ISO8601Format()) -->
                         - [ ] Check the finished app <!-- bid:dead0003 -->
                         ## Done
                         """, blobSha: nil)

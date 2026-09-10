@@ -425,7 +425,12 @@ final class AgentChatModel {
     }
     static func fetchPanes(_ session: LiveAgentSession) async throws -> AgentChatPanes {
         #if DEBUG && targetEnvironment(simulator)
-        if AgentChatFixture.enabled { return try AgentChatFixture.panes(session) }
+        if AgentChatFixture.enabled {
+            if ProcessInfo.processInfo.arguments.contains("--chat-opening-slow"), AgentChatFixture.reads == 0 {
+                try await Task.sleep(for: .seconds(6))
+            }
+            return try AgentChatFixture.panes(session)
+        }
         #endif
         return try await PhrenConnection.chatPanes(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), workspaceID: session.workspaceID, tabID: session.tab.id)
     }

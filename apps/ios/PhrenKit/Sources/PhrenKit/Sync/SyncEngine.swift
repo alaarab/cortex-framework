@@ -314,8 +314,8 @@ public actor SyncEngine {
         }
         // Local apply next — a domain error (empty text, secret, ambiguous
         // match) surfaces to the user immediately and nothing is queued.
-        let applied = try await applyLocally(op)
         var queued = QueuedOp(op: op)
+        let applied = try await applyLocally(op, createdAt: queued.queuedAt)
         queued.paths = applied.paths
         queued.deletedShas = applied.deletedShas.isEmpty ? nil : applied.deletedShas
         queue.pending.append(queued)
@@ -337,7 +337,7 @@ public actor SyncEngine {
         for var queued in retrying {
             if queued.paths?.isEmpty ?? false {
                 do {
-                    let applied = try await applyLocally(queued.op)
+                    let applied = try await applyLocally(queued.op, createdAt: queued.queuedAt)
                     queued.paths = applied.paths
                     queued.deletedShas = applied.deletedShas.isEmpty ? nil : applied.deletedShas
                 } catch {
@@ -669,7 +669,7 @@ public actor SyncEngine {
 
         for queued in ops {
             do {
-                let edits = try await computeEdits(queued.op, overlay: overlay)
+                let edits = try await computeEdits(queued.op, createdAt: queued.queuedAt, overlay: overlay)
                 for edit in edits {
                     if overlay.updateValue(edit.content, forKey: edit.path) == nil {
                         order.append(edit.path)
@@ -724,10 +724,10 @@ public actor SyncEngine {
     /// Applies the op to local cached content only (optimistic UI), reporting
     /// the files it touched so the flush knows exactly what to push.
     @discardableResult
-    private func applyLocally(_ op: PendingOp) async throws -> (paths: [String], deletedShas: [String: String]) {
+    private func applyLocally(_ op: PendingOp, createdAt: Date) async throws -> (paths: [String], deletedShas: [String: String]) {
         var paths: [String] = []
         var deletedShas: [String: String] = [:]
-        for edit in try await computeEdits(op) {
+        for edit in try await computeEdits(op, createdAt: createdAt) {
             paths.append(edit.path)
             if let content = edit.content {
                 try await store.write(edit.path, content: content, blobSha: nil)
@@ -786,7 +786,7 @@ public actor SyncEngine {
 
     /// Maps a domain op to concrete file edits against current local content.
     /// Each case mirrors the CLI handler documented on the file types.
-    private func computeEdits(_ op: PendingOp, overlay: [String: String?] = [:]) async throws -> [FileEdit] {
+    private func computeEdits(_ op: PendingOp, createdAt: Date, overlay: [String: String?] = [:]) async throws -> [FileEdit] {
         let project = op.project
         switch op {
         case .addFinding(_, let text, let type):
@@ -901,7 +901,7 @@ public actor SyncEngine {
 
         case .addTask(_, let text):
             var file = TasksFile(project: project, content: await read("\(project)/tasks.md", overlay: overlay))
-            try file.add(text)
+            try file.add(text, createdAt: createdAt.ISO8601Format(.init(includingFractionalSeconds: true)))
             return [FileEdit(path: "\(project)/tasks.md", content: file.render())]
 
         case .completeTask(_, let match):

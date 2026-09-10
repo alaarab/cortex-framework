@@ -14,11 +14,19 @@ their sessions, exploring a project's findings and graph, adjusting skills or
 instructions, and adding direction when needed. It does not require approving
 every finding or agent action.
 
-The main tabs are **Projects, Agents, Tasks, Search, and Settings**. Tasks opens
-on **Active**; **Backlog** and **Done** are separate searchable views. Task rows
-show a short preview; tap the text to read the full plan, or use the checkbox
-to complete it. Projects appear above agent setup links; the **More** menu
-keeps Skills, Agent instructions, and Live sessions available without scrolling.
+The main tabs are **Projects, Agents, Tasks, Search, and Settings**. Tasks is your
+workload view: it starts on **Backlog** and remembers your choice of Backlog,
+Active, or Done. A compact status menu, optional search, filters (creation age,
+priority, project, and store), and sorting share one control row. Sort by task
+order, newest, oldest, or priority; the choice is saved.
+
+Task rows show two-line previews and creation dates. Tap the text to read the
+full plan, check it to complete, or swipe for **Start**, **Backlog**, and **Done**.
+**Select** lets you move several tasks together, including across stores. Bulk
+controls appear only while selecting. Older tasks without a recorded date say
+**Date unknown**. New tasks retain their creation time through edits and offline
+sync. Projects appear above agent setup links; the **More** menu keeps Skills,
+Agent instructions, and Live sessions available without scrolling.
 The **Agents** tab opens with sessions from every saved computer, grouped with
 working and waiting sessions first, followed by idle, done, and other open tabs.
 Each compact row names its computer; tap to chat or use its info button for
@@ -26,12 +34,15 @@ terminal and session details. Search matches computers, projects, titles, agents
 and folders. Computer connections, Skills, and Agent instructions remain below.
 
 **Settings → Appearance → Theme** offers Charcoal (white text, dark panels,
-green controls), Amethyst (deep violet), Graphite (warm charcoal), and Slate
+Phren purple controls), Amethyst (deep violet), Graphite (warm charcoal), and Slate
 (cyan and lavender). Charcoal is the default. Create a named custom theme from
 any preset or your current palette, then choose background, text, panel, accent,
 and link colors with swatches or hex values. Preview before saving; edit,
 duplicate, or delete saved themes. Choices persist across launches and apply
 throughout the app and terminal while preserving navigation and chat drafts.
+
+Herdr uses a single compact header for back, computer/status, and reconnect.
+The terminal starts directly below it; the keyboard stays hidden until requested.
 
 Chat uses compact tool activity and a full-width composer. Its smaller Send
 control becomes Stop while an agent works and the draft is empty; typing a new
@@ -280,8 +291,8 @@ Phren connects directly to **Phren Hook**, the independent helper shipped with
 `@phren/cli`. Install it on each computer running your agents:
 
 ```sh
-npx --yes @phren/cli@0.2.13 bridge install
-npx --yes @phren/cli@0.2.13 bridge doctor
+npx --yes @phren/cli@0.2.14 bridge install
+npx --yes @phren/cli@0.2.14 bridge doctor
 ```
 
 Requirements: macOS or Linux, Node 20+, Herdr, SSH/Remote Login, and `lsof`.
@@ -301,10 +312,10 @@ administrator. The bundled helper is copied out of the npm cache into a versione
 folder under `~/.local/share/phren/bridge`; it does not need `npx` at runtime.
 
 ```sh
-npx --yes @phren/cli@0.2.13 bridge status
-npx --yes @phren/cli@0.2.13 bridge update
-npx --yes @phren/cli@0.2.13 bridge rollback
-npx --yes @phren/cli@0.2.13 bridge uninstall
+npx --yes @phren/cli@0.2.14 bridge status
+npx --yes @phren/cli@0.2.14 bridge update
+npx --yes @phren/cli@0.2.14 bridge rollback
+npx --yes @phren/cli@0.2.14 bridge uninstall
 ```
 
 Uninstall stops the background service and removes Phren's agent callbacks.
@@ -343,6 +354,10 @@ The terminal keyboard opens only from its keyboard button. Taps keep Herdr's
 switch control and links clickable; swipe to scroll, pinch to adjust text size,
 and hold to select. The compact dock includes arrows, Enter, Backspace, clear
 line, clipboard, and agent shortcuts. Holding Ctrl opens the shortcut panels.
+The **Uploads** tab offers Photos, Camera, and Files. Phren Hook 0.2.14 identifies
+the currently focused pane, then verifies its agent conversation before opening
+the attachments as a native chat draft. With older Hooks, choose the destination
+session explicitly. Attachments upload only when you press Send.
 
 **Web servers** discovers the user's listening HTTP development apps. Phren opens
 previews through an SSH tunnel, so loopback-only apps work from the iPhone.

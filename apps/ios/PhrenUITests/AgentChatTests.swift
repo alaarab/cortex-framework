@@ -2,6 +2,21 @@ import XCTest
 
 final class AgentChatTests: XCTestCase {
     @MainActor
+    func testOpeningSpinnerIsCenteredInTheConversation() {
+        let app = launch(extra: ["--chat-opening-slow"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let spinner = app.activityIndicators["chat-opening-spinner"]
+        XCTAssertTrue(spinner.waitForExistence(timeout: 2))
+        let conversation = app.scrollViews["chat-transcript"]
+        XCTAssertTrue(conversation.exists)
+        XCTAssertEqual(spinner.frame.midY, conversation.frame.midY, accuracy: 12)
+        XCTAssertEqual(spinner.frame.midX, conversation.frame.midX, accuracy: 12)
+        capture(app, "Conversation loading centered above composer")
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 8))
+        XCTAssertFalse(spinner.exists)
+    }
+
+    @MainActor
     func testLargeTextCommandMenuLeavesComposerAndKeyboardUsable() {
         let app = launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
         app.buttons["live-chat:w7:w7:t9"].tap()
@@ -79,8 +94,8 @@ final class AgentChatTests: XCTestCase {
         composer.tap(); composer.typeText("/my-plugin/review path.swift --strict")
         XCTAssertTrue(app.buttons["chat-all-commands"].waitForExistence(timeout: 5))
         app.buttons["chat-send"].tap()
-        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.otherElements["herdr-terminal-header"].waitForExistence(timeout: 8))
+        app.buttons["herdr-terminal-back"].tap()
         XCTAssertTrue(app.staticTexts["Received in copilot on w7:p1: /my-plugin/review path.swift --strict"].waitForExistence(timeout: 8))
     }
 
@@ -99,7 +114,7 @@ final class AgentChatTests: XCTestCase {
         app.buttons["chat-command:/model"].tap()
         XCTAssertEqual(composer.value as? String, "/model ")
         app.buttons["chat-all-commands"].tap()
-        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["herdr-terminal-header"].waitForExistence(timeout: 8))
         let report = app.staticTexts["terminal-fixture-report"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let value = try? JSONSerialization.jsonObject(with: Data(report.label.utf8)) as? [String: Any]
@@ -161,7 +176,7 @@ final class AgentChatTests: XCTestCase {
         composer.tap(); composer.typeText("Keep the Phren details")
         capture(app, "Integrated composer with keyboard")
         app.buttons["chat-terminal"].tap()
-        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["herdr-terminal-header"].waitForExistence(timeout: 8))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.navigationBars["Agent chat"].exists)
@@ -239,7 +254,7 @@ final class AgentChatTests: XCTestCase {
         app.buttons["work"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Herdr server", "work")).firstMatch.waitForExistence(timeout: 8))
         app.buttons["Open Herdr terminal"].tap()
-        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["herdr-terminal-header"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Test Mac · work"].waitForExistence(timeout: 8))
     }
     @MainActor
@@ -281,7 +296,7 @@ final class AgentChatTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Chat options"].tap()
         app.buttons["Herdr terminal"].tap()
-        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["herdr-terminal-header"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Toggle terminal keyboard"].waitForExistence(timeout: 8))
         capture(app, "Native Herdr terminal")
     }
