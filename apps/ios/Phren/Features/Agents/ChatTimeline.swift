@@ -124,8 +124,10 @@ private struct ToolDetailView: View {
                     Spacer()
                     Button("View full output", systemImage: "arrow.up.left.and.arrow.down.right") {
                         fullOutput = .init(title: presentation.title, text: presentation.body)
-                    }.accessibilityIdentifier("chat-tool-output:\(id)")
+                    }.frame(width: 36, height: 32).contentShape(Rectangle())
+                        .accessibilityIdentifier("chat-tool-output:\(id)")
                     Button("Copy tool details", systemImage: "doc.on.doc") { UIPasteboard.general.string = presentation.body }
+                        .frame(width: 36, height: 32).contentShape(Rectangle())
                 }.font(.caption2).foregroundStyle(PhrenTheme.textMuted)
                     .labelStyle(.iconOnly).buttonStyle(.plain).frame(minHeight: 32)
                 Text(presentation.body.isEmpty ? "No output" : ToolOutputPreview(presentation.body).text)
