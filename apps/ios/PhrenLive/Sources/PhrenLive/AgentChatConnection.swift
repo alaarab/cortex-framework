@@ -25,10 +25,23 @@ extension PhrenConnection {
 
     public static func chatHistory(host: LiveHost, privateKey: Data, target: AgentChatTarget, beforeLine: Int) async throws -> AgentChatTranscript {
         guard target.hostID == host.id && target.muxID == host.muxID, beforeLine > 0 else { throw PhrenKitError.validation("This history has no earlier destination.") }
-        let request = GatewayRequest.transcript(target, beforeLine: beforeLine)
-        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKey)
+        let data: Data
+        do {
+            // A history page should not download a fresh backlog or wait for
+            // a WebSocket polling cycle before asking for the requested range.
+            data = try await fetchData(host: host, key: key, request: .history(target, beforeLine: beforeLine))
+        } catch let error as LiveConnectionError {
+            switch error {
+            case .response(404), .gatewayRejection(status: 404, reason: _):
+                // Existing computers remain usable until their Hook is updated.
+                data = try await fetchData(host: host, key: key, request: .transcript(target, beforeLine: beforeLine))
+            default: throw error
+            }
+        }
         let result = try AgentChatTranscript.read(data, source: target.source)
-        guard result.kind == .older, result.messages.allSatisfy({ $0.line < beforeLine }) else {
+        guard result.kind == .older, result.messages.allSatisfy({ $0.line < beforeLine }),
+              !result.hasMore || result.startLine.map({ $0 >= 0 && $0 < beforeLine }) == true else {
             throw PhrenKitError.validation("The computer returned a different history range.")
         }
         return result
@@ -111,6 +124,10 @@ struct GatewayRequest: Sendable {
     }
     static func transcript(_ target: AgentChatTarget, streaming: Bool = false, beforeLine: Int? = nil) -> Self {
         Self(path: path("/v1/transcripts", targetQuery(target)), webSocket: true, streaming: streaming, beforeLine: beforeLine)
+    }
+    static func history(_ target: AgentChatTarget, beforeLine: Int) -> Self {
+        var query = targetQuery(target); query["beforeLine"] = String(beforeLine)
+        return Self(path: path("/v1/transcripts/history", query), maximumResponseBytes: 8_388_608)
     }
     static func targetBody(_ target: AgentChatTarget, fields: [String: Any] = [:]) throws -> Data {
         var body = fields; body["target"] = targetQuery(target)

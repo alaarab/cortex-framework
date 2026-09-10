@@ -3,6 +3,21 @@ import XCTest
 @testable import PhrenKit
 
 final class AgentChatProgressTests: XCTestCase {
+    func testSharedHookLifecycleAndUsageContract() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "hook-events", withExtension: "json", subdirectory: "Fixtures"))
+        let cases = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
+        for fixture in cases {
+            let source = try XCTUnwrap(fixture["source"] as? String)
+            let events = try XCTUnwrap(fixture["events"] as? [[String: Any]])
+            let rows = events.enumerated().map { ["line": $0.offset, "raw": $0.element] as [String: Any] }
+            var progress = AgentChatProgress()
+            progress.receive(try frame("backlog", rows, total: rows.count, source: source))
+            XCTAssertEqual(progress.usage?.input, fixture["input"] as? Int)
+            XCTAssertEqual(progress.usage?.output, fixture["output"] as? Int)
+            let phase = progress.phase.map { String(describing: $0) }
+            XCTAssertEqual(phase, fixture["phase"] as? String)
+        }
+    }
     func testNewConversationCanHaveAnEmptyBacklogWithoutEntries() throws {
         let frame = try AgentChatTranscript.read(Data(#"{"source":"codex","type":"backlog","totalLines":1}"#.utf8), source: "codex")
         XCTAssertTrue(frame.messages.isEmpty); XCTAssertTrue(frame.progressEvents.isEmpty)
@@ -44,18 +59,32 @@ final class AgentChatProgressTests: XCTestCase {
         XCTAssertNil(progress.phase); XCTAssertNil(progress.usage); XCTAssertNil(progress.startedAt)
     }
 
+    func testCodexCachedInputIsIncludedAndCompletionAliasFinishes() throws {
+        var progress = AgentChatProgress()
+        progress.receive(try frame("backlog", [row(0, "task_started"), row(1, "token_count", ["info": [
+            "last_token_usage": ["input_tokens": 227163, "cached_input_tokens": 224640, "output_tokens": 231, "reasoning_output_tokens": 37],
+            "total_token_usage": ["input_tokens": 900000, "output_tokens": 8000]
+        ]]), row(2, "task_completed")], total: 3))
+        XCTAssertEqual(progress.usage?.uncachedInput, 2523)
+        XCTAssertEqual(progress.usage?.output, 231)
+        XCTAssertEqual(progress.usage?.reasoningOutput, 37)
+        XCTAssertEqual(progress.phase, .finished)
+        XCTAssertNil(AgentTokenUsage.read(["input_tokens": 10, "cached_input_tokens": 20, "output_tokens": 2]))
+    }
+
     func testClaudeUsageSkipsSidechainsAndMalformedCounters() throws {
         func claude(_ line: Int, usage: [String: Any], sidechain: Bool = false) -> [String: Any] {
             ["line": line, "raw": ["type": "assistant", "isSidechain": sidechain,
                 "message": ["role": "assistant", "content": [], "usage": usage]]]
         }
-        let valid: [String: Any] = ["input_tokens": 40, "cache_read_input_tokens": 25, "output_tokens": 9]
+        let valid: [String: Any] = ["input_tokens": 40, "cache_read_input_tokens": 25, "cache_creation_input_tokens": 15, "output_tokens": 9]
         let frames = try frame("backlog", [claude(0, usage: valid), claude(1, usage: valid, sidechain: true),
             claude(2, usage: ["input_tokens": -1, "output_tokens": 9]), claude(3, usage: ["input_tokens": true, "output_tokens": 2]),
             claude(4, usage: ["input_tokens": 1.5, "output_tokens": 9])], total: 5, source: "claude")
         XCTAssertEqual(frames.progressEvents.count, 1)
         var progress = AgentChatProgress(); progress.receive(frames)
         XCTAssertEqual(progress.usage?.output, 9); XCTAssertEqual(progress.usage?.cachedInput, 25)
+        XCTAssertEqual(progress.usage?.input, 80); XCTAssertEqual(progress.usage?.uncachedInput, 55)
         XCTAssertNil(progress.phase)
     }
 

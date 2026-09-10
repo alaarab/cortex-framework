@@ -217,9 +217,10 @@ final class AgentChatTests: XCTestCase {
         app.buttons["Chat options"].tap()
         XCTAssertTrue(app.buttons["chat-token-usage"].waitForExistence(timeout: 5))
         app.buttons["chat-token-usage"].tap()
-        XCTAssertTrue(app.buttons["Latest reported model response"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Output: 85 tokens"].exists)
-        XCTAssertTrue(app.buttons["Input: 128 tokens"].exists)
+        XCTAssertTrue(app.staticTexts["Latest model response"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "usage-output").firstMatch.label.contains("85"))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "usage-total-input").firstMatch.label.contains("128"))
+        capture(app, "Latest model response usage")
     }
 
     @MainActor
@@ -270,7 +271,7 @@ final class AgentChatTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Theme.swift"].waitForExistence(timeout: 5))
         app.staticTexts["Theme.swift"].tap()
         capture(app, "Native repository diff")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "+let accent = cyan")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "+let accent = purple")).firstMatch.exists)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Chat options"].tap()
@@ -296,6 +297,19 @@ final class AgentChatTests: XCTestCase {
         XCTAssertEqual(restored.value as? String, "Keep this across relaunch")
         XCTAssertTrue(app.buttons["Preview Screenshot.png"].waitForExistence(timeout: 8))
         capture(app, "Draft restored after process relaunch")
+    }
+    @MainActor
+    func testToolPatchShowsChangesAndUnwrapsResult() {
+        let app = launch(extra: ["--chat-diffs"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let group = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat-tool-group:")).firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 8))
+        XCTAssertTrue(group.label.contains("Patch"))
+        group.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "+let action = phrenPurple")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Updated Theme.swift"].exists)
+        XCTAssertTrue(app.buttons["Copy patch"].exists)
+        capture(app, "Phren purple actions and native tool diff")
     }
     /// Seed this simulator with `xcrun simctl addmedia <device> <test-image>`.
     @MainActor
@@ -372,6 +386,14 @@ final class AgentChatTests: XCTestCase {
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["chat-history"].exists)
+    }
+
+    @MainActor
+    func testHistoryContinuesPastMetadataOnlyPage() {
+        let app = launch(extra: ["--chat-history", "--chat-metadata-history"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Retry loading earlier messages"].exists)
     }
 
     @MainActor

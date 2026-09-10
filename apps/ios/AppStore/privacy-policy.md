@@ -10,16 +10,16 @@ Keep the "Last updated" date accurate — a policy dated before a material
 change is worse than no policy.
 -->
 
-**Last updated: 6 September 2026**
+**Last updated: 10 September 2026**
 
 phren for iOS ("the app") is a client for a knowledge store you own,
 stored in a Git repository on GitHub. This policy explains what the app
 does with your data. Store sync goes directly to the GitHub account you
-connect. Optional SSH connections, app handoffs, and voice features are described below.
+connect. Optional SSH connections, agent chat, and voice features are described below.
 
 ## We do not collect your data
 
-There is no phren account, no phren server, and no phren backend. The
+There is no phren account or developer-operated phren backend. The
 developer of this app receives **no** data from it — no analytics, no
 crash reporting, no telemetry, no advertising identifiers, no usage
 statistics. The app uses open-source SwiftNIO SSH and Swift Crypto for optional
@@ -35,14 +35,17 @@ computer connections; these libraries do not provide analytics or telemetry.
 - **A queue of pending changes** you have made but which have not yet been
   pushed to GitHub.
 - **App settings**, such as your chosen default project for quick capture
-  and a short log of recent captures, saved graph views, and optional Moshi
-  session links associated with your projects. Optional live connections also
+  and a short log of recent captures, saved graph views, and custom themes.
+  Optional live connections also
   save computer addresses, usernames, trusted SSH fingerprints, and directory
   links to projects in device preferences.
 - **A separate SSH private key per added computer**, in the device Keychain,
   accessible only while unlocked and excluded from Keychain syncing and backups.
 - **Last received live session metadata**, such as tab names, agent states, and
   working directories, in memory while the session screen exists.
+- **Chat drafts and attached images**, in the app's private storage so they
+  survive relaunch. Conversation content is read from your connected computer;
+  it is not sent to the phren developer.
 
 Deleting the app removes its private container. Keychain credentials can
 survive app deletion: signing out clears the GitHub token, and **Forget
@@ -62,26 +65,30 @@ repositories as commits authored by your GitHub account.
 Your use of GitHub is governed by GitHub's own privacy policy:
 https://docs.github.com/site-policy/privacy-policies
 
-## Optional Moshi session links
-
-If you save a Moshi shortcut, its session name and optional workspace,
-window, tab, and pane identifiers remain in phren's device settings.
-Tapping **Open in Moshi** passes those identifiers to the Moshi app through
-an iOS URL handoff. The handoff contains no GitHub token or store content.
-Moshi handles the destination session under its own privacy policy.
-
 ## Optional live computer connections
 
 When you open an added computer, phren connects directly to its configured
-SSH address and reads session metadata from the Moshi hook on that computer.
+SSH address and reads session metadata and conversations from Phren Hook on
+that computer. Phren Hook is installed and operated on your own computer.
 The SSH public key identifies this device; the private key is never sent.
 The app verifies the computer's SSH host key against the fingerprint you trust.
-It does not send GitHub credentials or store contents to this connection.
+GitHub credentials are not sent to this connection. If you attach project
+memory, skills, text, or images to chat, the app sends that content to the
+selected computer and agent when you submit the message. That agent may send
+it to its configured AI provider under that provider's privacy policy.
 
-Reads stop when you leave the computer screen or the app becomes inactive.
-The app does not fetch transcripts, send terminal commands, or approve agent
-actions. No live metadata is uploaded to GitHub or a phren server. Copying or
+Live reads pause when the app becomes inactive. You can send chat and terminal
+input, stop a turn, and respond to supported approval requests. These actions
+go to your connected computer. Uploaded images are retained there for up to
+14 days, with expiry checked when another upload occurs; uninstalling the Hook
+preserves local data for recovery. No live metadata is uploaded to GitHub or
+the phren developer. Copying or
 sharing the SSH authorization line exports only public key material.
+
+Web previews forward the selected development server through SSH into an
+isolated in-app browser. Pages can contact external resources they include;
+those services receive normal web requests. Links to unrelated pages open
+outside the privileged preview browser.
 
 ## Microphone and speech recognition
 

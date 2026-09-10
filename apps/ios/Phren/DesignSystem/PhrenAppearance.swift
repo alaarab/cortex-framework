@@ -19,8 +19,8 @@ enum PhrenAppearanceStyle: String, CaseIterable, Identifiable {
         case .charcoal:
             return .init(background: 0x1E1E1E, sunken: 0x141618, surface: 0x282A2C, raised: 0x3C3F42,
                          chatCanvas: 0x1E1E1E, chatPanel: 0x0E0E0E, text: 0xFFFFFF, secondary: 0xECEDEE,
-                         muted: 0xA4A9B1, dim: 0x999FA8, accent: 0x50C85A, hover: 0x8BE892, solid: 0x31833B,
-                         action: 0x00FF00, navigation: 0xFFFFFF, toolPanel: 0x121416, link: 0x7FA6FF)
+                         muted: 0xA4A9B1, dim: 0x999FA8, accent: 0xB994F4, hover: 0xDCC5FF, solid: 0x7450A7,
+                         action: 0xB994F4, navigation: 0xB994F4, toolPanel: 0x121416, link: 0xC2AAFF)
         case .amethyst:
             return .init(background: 0x17121F, sunken: 0x100C17, surface: 0x251E32, raised: 0x3A2E4D,
                          chatCanvas: 0x17121F, chatPanel: 0x100D17, text: 0xEEE3FF, secondary: 0xD8CAE9,
@@ -58,14 +58,21 @@ struct PhrenCustomTheme: Codable, Identifiable, Equatable {
 /// Changing appearance never recreates navigation, chat models, or SSH sessions.
 @Observable final class PhrenAppearance {
     static let storageKey = "appearance.theme.v1"
+    static let customStorageKey = "appearance.custom-themes.v2"
+    static let recoveryKey = "appearance.custom-themes.recovery"
+    private struct Collection: Codable {
+        var schemaVersion = 2
+        let themes: [PhrenCustomTheme]
+    }
     static let shared = PhrenAppearance(defaults: ProcessInfo.processInfo.arguments.contains("--ui-testing")
                                         ? UserDefaults(suiteName: "phren.ui-tests")! : .standard)
     private let defaults: UserDefaults
+    private(set) var storageIssue: String?
     var selectedID: String {
         didSet { defaults.set(selectedID, forKey: Self.storageKey) }
     }
     private(set) var customThemes: [PhrenCustomTheme] {
-        didSet { if let data = try? JSONEncoder().encode(customThemes) { defaults.set(data, forKey: "appearance.custom-themes.v1") } }
+        didSet { if let data = try? JSONEncoder().encode(Collection(themes: customThemes)) { defaults.set(data, forKey: Self.customStorageKey) } }
     }
     var palette: PhrenPalette {
         customThemes.first { $0.id == selectedID }?.palette
@@ -87,8 +94,25 @@ struct PhrenCustomTheme: Codable, Identifiable, Equatable {
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
-        customThemes = defaults.data(forKey: "appearance.custom-themes.v1")
-            .flatMap { try? JSONDecoder().decode([PhrenCustomTheme].self, from: $0) } ?? []
+        customThemes = []
+        if let data = defaults.data(forKey: Self.customStorageKey) ?? defaults.data(forKey: "appearance.custom-themes.v1") {
+            do {
+                let decoded: [PhrenCustomTheme]
+                if defaults.data(forKey: Self.customStorageKey) != nil {
+                    let collection = try JSONDecoder().decode(Collection.self, from: data)
+                    guard collection.schemaVersion == 2 else { throw CocoaError(.coderReadCorrupt) }
+                    decoded = collection.themes
+                } else { decoded = try JSONDecoder().decode([PhrenCustomTheme].self, from: data) }
+                guard Set(decoded.map(\.id)).count == decoded.count else { throw CocoaError(.coderReadCorrupt) }
+                customThemes = decoded
+            } catch {
+                // Preserve the original bytes before any subsequent edit can
+                // replace them. Reopening the app does not duplicate backups.
+                var backups = defaults.array(forKey: Self.recoveryKey) as? [Data] ?? []
+                if !backups.contains(data) { backups.append(data); defaults.set(backups, forKey: Self.recoveryKey) }
+                storageIssue = "Saved custom themes couldn't be read. The original data is preserved for recovery; built-in themes are available."
+            }
+        }
         selectedID = defaults.string(forKey: Self.storageKey) ?? PhrenAppearanceStyle.charcoal.id
     }
 }

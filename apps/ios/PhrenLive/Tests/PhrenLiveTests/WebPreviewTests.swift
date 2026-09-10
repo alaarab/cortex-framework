@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -15,8 +16,12 @@ final class WebPreviewTests: XCTestCase {
         let server = try entry(port: 19472)
         let tunnel = try await WebPreviewTunnel.open(host: relay.host(), privateKey: relay.deviceKey.rawRepresentation, server: server)
         defer { tunnel.close() }
-        let session = URLSession(configuration: .ephemeral)
+        let session = session(tunnel)
         defer { session.invalidateAndCancel() }
+        let unauthenticated = URLSession(configuration: .ephemeral)
+        defer { unauthenticated.invalidateAndCancel() }
+        let (_, denied) = try await unauthenticated.data(from: URL(string: "http://127.0.0.1:\(tunnel.proxyPort)/")!)
+        XCTAssertEqual((denied as? HTTPURLResponse)?.statusCode, 407, "Raw local clients cannot reach the remote app")
         for path in ["/", "/asset.js", "/redirect"] {
             let (data, response) = try await session.data(from: tunnel.url.appendingPathComponent(path))
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
@@ -42,6 +47,12 @@ final class WebPreviewTests: XCTestCase {
         guard case .string(let reply) = try await socket.receive() else { return XCTFail("Expected live reload frame") }
         XCTAssertEqual(reply, "live reload")
         socket.cancel(with: .goingAway, reason: nil)
+        var wrongTarget = URLComponents(url: tunnel.url, resolvingAgainstBaseURL: false)!
+        wrongTarget.port = 19473
+        do {
+            let (_, response) = try await session.data(from: wrongTarget.url!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
+        } catch { /* CFNetwork can surface a rejected CONNECT as a connection error. */ }
         tunnel.close(); await tunnel.waitUntilClosed()
         do { _ = try await session.data(from: tunnel.url); XCTFail("Closing preview must close the listener") }
         catch { }
@@ -56,9 +67,9 @@ final class WebPreviewTests: XCTestCase {
         let tunnelA = try await WebPreviewTunnel.open(host: a.host(), privateKey: a.deviceKey.rawRepresentation, server: server)
         let tunnelB = try await WebPreviewTunnel.open(host: b.host(), privateKey: b.deviceKey.rawRepresentation, server: server)
         defer { tunnelA.close(); tunnelB.close() }
-        XCTAssertNotEqual(tunnelA.url, tunnelB.url)
-        let (one, _) = try await URLSession.shared.data(from: tunnelA.url)
-        let (two, _) = try await URLSession.shared.data(from: tunnelB.url)
+        XCTAssertNotEqual(tunnelA.proxyPort, tunnelB.proxyPort)
+        let (one, _) = try await session(tunnelA).data(from: tunnelA.url)
+        let (two, _) = try await session(tunnelB).data(from: tunnelB.url)
         XCTAssertEqual(String(decoding: one, as: UTF8.self), "first")
         XCTAssertEqual(String(decoding: two, as: UTF8.self), "second")
         do {
@@ -82,9 +93,16 @@ final class WebPreviewTests: XCTestCase {
         defer { Task { try? await webRelay.close() } }
         let tunnel = try await WebPreviewTunnel.open(host: webRelay.host(), privateKey: webRelay.deviceKey.rawRepresentation, server: server)
         defer { tunnel.close() }
-        let (body, response) = try await URLSession.shared.data(from: tunnel.url)
+        let (body, response) = try await session(tunnel).data(from: tunnel.url)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         XCTAssertGreaterThan(body.count, 100)
+    }
+
+    private func session(_ tunnel: WebPreviewTunnel) -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.proxyConfigurations = [tunnel.proxyConfiguration]
+        config.timeoutIntervalForRequest = 10
+        return URLSession(configuration: config)
     }
 
     private func entry(port: Int) throws -> WebServer {
@@ -112,7 +130,9 @@ private final class PreviewSite: ChannelInboundHandler, RemovableChannelHandler 
     init(name: String) { self.name = name }
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
-        case .head(let head): path = head.uri; bytes.clear()
+        case .head(let head):
+            XCTAssertNil(head.headers.first(name: "Proxy-Authorization"), "Preview credentials must never reach the app")
+            path = head.uri; bytes.clear()
         case .body(var body): bytes.writeBuffer(&body)
         case .end:
             let body = path == "/upload" ? bytes : ByteBuffer(string: name)

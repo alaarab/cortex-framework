@@ -41,6 +41,7 @@ struct SettingsView: View {
                         }
                     }.accessibilityIdentifier("settings-theme")
                 }
+                if model.phase == .ready {
                 Section {
                     ForEach(model.storeContexts) { context in
                         StoreHealthCard(
@@ -77,6 +78,7 @@ struct SettingsView: View {
                         model.showingMemoryMaintenance = true
                     }
                 }
+                }
 
                 Section("Agent connections") {
                     NavigationLink("Computers & Phren Hook") { LiveSessionsView() }
@@ -84,7 +86,14 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                Section("Account") {
+                Section("GitHub memory") {
+                    if model.phase == .signedOut || model.phase == .loading {
+                        Button("Connect memory", systemImage: "arrow.triangle.2.circlepath") {
+                            model.showingMemoryConnection = true
+                        }.accessibilityIdentifier("settings-connect-memory")
+                        Text("GitHub is used for memory sync. Agent connections use your computers' SSH keys.")
+                            .font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                    } else {
                     if let user = model.user {
                         LabeledContent("GitHub", value: "@\(user.login)")
                         if let name = user.name {
@@ -94,8 +103,10 @@ struct SettingsView: View {
                     Button("Sign out", role: .destructive) {
                         confirmSignOut = true
                     }
+                    }
                 }
 
+                if model.phase == .ready {
                 Section {
                     ForEach(model.storeContexts) { context in
                         StoreRow(context: context)
@@ -135,6 +146,7 @@ struct SettingsView: View {
                             failedOps = await model.failedOps()
                         }
                     }
+                }
                 }
 
                 if !failedOps.isEmpty {
@@ -257,7 +269,7 @@ struct SettingsView: View {
                 }
             }
             .confirmationDialog(
-                "Sign out and remove the local copies of all stores from this device?",
+                "Sign out of GitHub and remove local memory stores? Your agent connections and chat drafts stay on this device.",
                 isPresented: $confirmSignOut,
                 titleVisibility: .visible
             ) {

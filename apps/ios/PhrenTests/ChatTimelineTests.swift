@@ -56,6 +56,40 @@ final class ChatTimelineTests: XCTestCase {
         XCTAssertEqual(ChatTimelineEntry.group(messages).first?.messages.first?.text, arguments)
     }
 
+    func testNestedExecOutputDisplaysOutputAndRetainsFailureAndRawEnvelope() throws {
+        let result = try JSONSerialization.data(withJSONObject: ["chunk_id": "123", "output": "diff output\nsecond line", "exit_code": 2])
+        let wrapper = try JSONSerialization.data(withJSONObject: [["type": "input_text", "text": String(decoding: result, as: UTF8.self)]])
+        let raw = String(decoding: wrapper, as: UTF8.self)
+        let display = ToolPresentation(title: "Tool result", text: raw)
+        XCTAssertEqual(display.body, "diff output\nsecond line\nExit code: 2")
+        XCTAssertEqual(display.raw, raw)
+        XCTAssertTrue(ToolPresentation(title: "Tool result", text: "{\"unknown\":42}").body.contains("unknown"))
+    }
+
+    func testOrchestratedShellAndPatchAreDecodedWithoutEvaluatingCode() throws {
+        let command = "git status\necho '$HOME'"
+        let literal = String(decoding: try JSONEncoder().encode(command), as: UTF8.self)
+        let display = ToolPresentation(title: "functions.exec", text: "text(await tools.exec_command({cmd:\(literal)}));")
+        XCTAssertEqual(display.title, "Shell")
+        XCTAssertEqual(display.body, command)
+        let dynamic = "await tools.exec_command({cmd:computeCommand()})"
+        XCTAssertEqual(ToolPresentation(title: "functions.exec", text: dynamic).body, dynamic)
+        let patch = "*** Begin Patch\n*** Update File: Theme.swift\n@@\n-old\n+new\n*** End Patch"
+        let patchLiteral = String(decoding: try JSONEncoder().encode(patch), as: UTF8.self)
+        let edit = ToolPresentation(title: "functions.exec", text: "text(await tools.apply_patch(\(patchLiteral)));")
+        XCTAssertEqual(edit.patch, patch)
+        XCTAssertEqual(edit.path, "Theme.swift")
+    }
+
+    func testUnifiedDiffNumbersResetAcrossHunksAndHeadersAreNotChanges() {
+        let diff = DiffPreview("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -7,2 +9,2 @@\n same\n-old\n+new\n@@ -20 +22 @@\n-another\n+replacement")
+        XCTAssertEqual(diff.added, 2); XCTAssertEqual(diff.removed, 2)
+        XCTAssertEqual(diff.lines.filter { $0.kind == .added }.map(\.new), [10, 22])
+        XCTAssertEqual(diff.lines.filter { $0.kind == .removed }.map(\.old), [8, 20])
+        let malformed = DiffPreview("@@ - + @@\n+x")
+        XCTAssertNil(malformed.lines.last?.new)
+    }
+
     private func read(_ payloads: [[String: Any]]) throws -> [AgentChatMessage] {
         try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": "backlog", "source": "codex", "totalLines": payloads.count,
             "entries": payloads.enumerated().map { ["line": $0.offset, "raw": ["type": "response_item", "payload": $0.element]] }]), source: "codex").messages

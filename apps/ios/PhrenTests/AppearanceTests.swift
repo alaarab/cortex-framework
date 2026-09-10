@@ -2,6 +2,26 @@ import XCTest
 @testable import Phren
 
 final class AppearanceTests: XCTestCase {
+    func testLegacyThemeMigrationAndUnreadableDataSurvivesNewEdits() throws {
+        let suite = "phren.appearance-test.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let theme = PhrenCustomTheme(name: "Legacy", palette: PhrenAppearanceStyle.slate.palette)
+        let legacy = try JSONEncoder().encode([theme])
+        defaults.set(legacy, forKey: "appearance.custom-themes.v1")
+        let migrated = PhrenAppearance(defaults: defaults)
+        XCTAssertEqual(migrated.customThemes, [theme])
+        migrated.save(theme)
+        XCTAssertEqual(PhrenAppearance(defaults: defaults).customThemes, [theme])
+        for broken in [Data("{invalid".utf8), Data(#"{"schemaVersion":99,"themes":[]}"#.utf8)] {
+            defaults.set(broken, forKey: PhrenAppearance.customStorageKey)
+            let damaged = PhrenAppearance(defaults: defaults)
+            XCTAssertNotNil(damaged.storageIssue)
+            XCTAssertTrue(damaged.customThemes.isEmpty)
+            damaged.save(theme)
+            XCTAssertTrue((defaults.array(forKey: PhrenAppearance.recoveryKey) as? [Data])?.contains(broken) == true)
+        }
+        XCTAssertEqual(defaults.data(forKey: "appearance.custom-themes.v1"), legacy)
+    }
     func testNamedCustomThemesRoundTripEditsAndDeletion() {
         let suite = "phren.appearance-test.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!

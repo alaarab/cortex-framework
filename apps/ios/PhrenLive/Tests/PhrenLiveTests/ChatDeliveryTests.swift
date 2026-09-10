@@ -8,6 +8,24 @@ import XCTest
 @testable import PhrenLive
 
 final class ChatDeliveryTests: XCTestCase {
+    func testHistoryUsesOnePinnedRequestAndAcceptsLargePages() async throws {
+        let helper = try await DeliveryHelper.start()
+        let ssh = try await ChatRelaySSH.start(forwardPorts: [24543: helper.channel.localAddress!.port!])
+        defer { Task { try await ssh.close(); try await helper.channel.close() } }
+        var host = try ssh.host(); host.herdrSession = "phone-test"
+        let target = try AgentChatTarget(hostID: host.id, workspaceID: "w1", tabID: "w1:t1", paneID: "w1:p1",
+                                        source: "codex", sessionID: "current-session", muxID: host.muxID)
+        let page = try await PhrenConnection.chatHistory(host: host, privateKey: ssh.deviceKey.rawRepresentation, target: target, beforeLine: 200)
+        XCTAssertEqual(page.messages.count, 150)
+        XCTAssertEqual(page.startLine, 50)
+        XCTAssertEqual(page.messages.last?.line, 199)
+        XCTAssertEqual(helper.historyCount, 1)
+        do {
+            _ = try await PhrenConnection.chatHistory(host: host, privateKey: ssh.deviceKey.rawRepresentation, target: target, beforeLine: 1)
+            XCTFail("A non-advancing cursor must fail instead of leaving pagination stuck")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("history range")) }
+    }
+
     func testLivePaneDeliveryIgnoresRejectedRecordedLocationAndPinsNamedServer() async throws {
         let helper = try await DeliveryHelper.start()
         let ssh = try await ChatRelaySSH.start(forwardPorts: [24543: helper.channel.localAddress!.port!])
@@ -78,8 +96,10 @@ private final class DeliveryHelper: @unchecked Sendable {
     private let lock = NSLock()
     private var accepted: [String] = []
     private var count = 0
+    private var historyRequests = 0
     var messages: [String] { lock.lock(); defer { lock.unlock() }; return accepted }
     var promptCount: Int { lock.lock(); defer { lock.unlock() }; return count }
+    var historyCount: Int { lock.lock(); defer { lock.unlock() }; return historyRequests }
     func response(path: String, body: Data) -> (HTTPResponseStatus, Data) {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(string: path)!
@@ -89,6 +109,18 @@ private final class DeliveryHelper: @unchecked Sendable {
         if parts.path == "/v1/workspaces/panes" && query == ["mux": "herdr:phone-test", "groupId": "w1", "childId": "w1:t1"] {
             value = ["kind": "herdr", "groupId": "w1", "childId": "w1:t1", "panes": [
                 ["id": "w1:p1", "label": "codex", "agent": "codex", "agentStatus": "working", "sessionId": "current-session"]]]
+        } else if parts.path == "/v1/transcripts/history" {
+            historyRequests += 1
+            var destination = query; destination.removeValue(forKey: "beforeLine")
+            if destination != ["server": "phone-test", "workspace": "w1", "tab": "w1:t1", "pane": "w1:p1", "source": "codex", "session": "current-session"] {
+                status = .conflict; value = ["error": "wrong destination"]
+            } else {
+                let before = Int(query["beforeLine"] ?? "") ?? 0
+                let entries: [[String: Any]] = before == 200 ? (50..<200).map { line in
+                    ["line": line, "raw": ["type": "response_item", "payload": ["type": "message", "role": "assistant", "content": String(repeating: "x", count: 10_000)]]]
+                } : []
+                value = ["type": "older", "source": "codex", "startLine": before == 200 ? 50 : before, "totalLines": 300, "hasMore": true, "entries": entries]
+            }
         } else if parts.path == "/v1/prompt" {
             count += 1
             let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]

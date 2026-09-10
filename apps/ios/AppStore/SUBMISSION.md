@@ -31,16 +31,21 @@ Xcode automatic provisioning can register identifiers and fetch profiles for
 an authenticated team. The September 2026 check obtained profiles for both
 targets with the App Group. Verify these for the account used to distribute:
 
-- [ ] Register App ID **`com.phren.ios`** (Certificates, Identifiers &
+- [x] Register App ID **`com.phren.ios`** (Certificates, Identifiers &
       Profiles → Identifiers → App IDs)
-- [ ] Register App ID **`com.phren.ios.widgets`**
-- [ ] Create App Group **`group.com.phren.ios`**
-- [ ] Enable the App Groups capability on **both** App IDs and assign that
+- [x] Register App ID **`com.phren.ios.widgets`**
+- [x] Create App Group **`group.com.phren.ios`**
+- [x] Enable the App Groups capability on **both** App IDs and assign that
       group to each
-- [ ] Confirm a signed build succeeds with the declared entitlements.
+- [x] Confirm a signed build succeeds with the declared entitlements.
       Unsigned CI uses `CODE_SIGNING_ALLOWED=NO`; a release must retain the group.
       `xcodegen generate` regenerates the entitlements files from
       `project.yml` — never hand-edit them.
+
+Verified September 10 against both embedded profiles in the signed build 31:
+team LYB298P4U6, app group present in app and widget, profiles expire September
+7, 2027. This proves development-device signing; it does not prove App Store
+Connect upload or TestFlight installation.
 
 > **If you'd rather ship v1 without widgets**, remove the `PhrenWidgets`
 > target and the App Group entitlement from `project.yml` instead. Shipping

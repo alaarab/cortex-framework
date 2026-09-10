@@ -24,16 +24,16 @@ struct AgentDiffView: View {
                     if diff.files.isEmpty { Label("Working tree is clean", systemImage: "checkmark.circle") }
                     ForEach(diff.files) { file in
                         NavigationLink {
-                            ScrollView([.horizontal, .vertical]) {
-                                LazyVStack(alignment: .leading, spacing: 14) {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 10) {
                                     ForEach(file.sections) { section in
                                         Text(section.kind.capitalized).font(.headline).foregroundStyle(PhrenTheme.textMuted)
                                         if section.binary == true { Text("Binary file changed").font(.subheadline) }
                                         else if let patch = section.patch, !patch.isEmpty {
-                                            Text(AgentDiffText.make(patch)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                                            CodeDiffView(patch: patch)
                                         } else { Text("This change needs the full terminal view.").font(.footnote) }
                                     }
-                                }.padding(16)
+                                }.padding(10)
                             }.background(PhrenTheme.bgSunken).navigationTitle(file.path).navigationBarTitleDisplayMode(.inline)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
@@ -57,7 +57,7 @@ struct AgentDiffView: View {
                 let result: AgentRepositoryDiff
                 #if DEBUG && targetEnvironment(simulator)
                 if AgentChatFixture.enabled {
-                    result = try AgentRepositoryDiff.read(Data(#"{"root":"/work/phone","launchPath":"/work/phone","branch":"main","files":[{"path":"Theme.swift","status":"modified","sections":[{"id":"theme","kind":"unstaged","binary":false,"patch":"@@ -1 +1 @@\n-let accent = purple\n+let accent = cyan"}]}]}"#.utf8))
+                    result = try AgentRepositoryDiff.read(Data(#"{"root":"/work/phone","launchPath":"/work/phone","branch":"main","files":[{"path":"Theme.swift","status":"modified","sections":[{"id":"theme","kind":"unstaged","binary":false,"patch":"@@ -1 +1 @@\n-let accent = green\n+let accent = purple"}]}]}"#.utf8))
                 } else { result = try await PhrenConnection.repositoryDiff(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target) }
                 #else
                 result = try await PhrenConnection.repositoryDiff(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target)
@@ -67,18 +67,4 @@ struct AgentDiffView: View {
         }
     }
     private struct Run: Equatable { let active: Bool; let refresh: UUID }
-}
-
-private enum AgentDiffText {
-    static func make(_ patch: String) -> AttributedString {
-        var result = AttributedString()
-        // Bound rendering independently of the network response; preserve copyable raw content below this limit.
-        for line in String(patch.prefix(160_000)).components(separatedBy: "\n") {
-            var part = AttributedString(line + "\n")
-            part.foregroundColor = line.hasPrefix("+") ? PhrenTheme.cyan : line.hasPrefix("-") ? PhrenTheme.warning : line.hasPrefix("@@") ? PhrenTheme.lavender : PhrenTheme.text
-            result.append(part)
-        }
-        if patch.count > 160_000 { result.append(AttributedString("\nPreview truncated. Open Herdr for the complete diff.")) }
-        return result
-    }
 }

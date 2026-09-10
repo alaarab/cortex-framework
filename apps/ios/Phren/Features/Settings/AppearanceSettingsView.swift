@@ -7,6 +7,9 @@ struct AppearanceSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                if let issue = appearance.storageIssue {
+                    Text(issue).font(.footnote).foregroundStyle(PhrenTheme.warning)
+                }
                 Text("Make it yours.")
                     .font(.title2.weight(.semibold)).foregroundStyle(PhrenTheme.text)
                 Button {

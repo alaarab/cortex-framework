@@ -12,8 +12,8 @@ a web service (Guideline 4.2, Minimum Functionality).
 
 ## Demo account — REQUIRED
 
-App Review cannot get past the first screen without a working token. Do
-this before submitting:
+Agents and Settings open without GitHub. Reviewing memory sync requires a
+working demo-store token. Prepare this before submitting:
 
 1. Create a GitHub account for review, or use a dedicated repository on
    your own account.
@@ -59,19 +59,21 @@ for candidates, stale memories, and conflicts.
 
 ARCHITECTURE — NO BACKEND
 
-There is no phren account and no phren server. The app talks directly to
+There is no phren account or developer-operated backend. The app talks directly to
 the GitHub REST API using a personal access token the user supplies, which
 is stored only in the device Keychain. We collect no data of any kind: no
 analytics, no crash reporting, and no telemetry. Optional Live sessions uses
-SwiftNIO SSH and Swift Crypto to read the Moshi hook on a computer the user
-adds. It requires its own SSH key and verified host fingerprint; it does not
-use a phren backend or share GitHub credentials. The core app does not require
-Moshi, Herdr, Tailscale, or a live computer connection.
+SwiftNIO SSH and Swift Crypto to connect to Phren Hook on a computer the user
+adds. Native chat, images, supported approvals, terminals, diffs, and local web
+previews use that connection. It requires its own SSH key and verified host
+fingerprint; it does not share GitHub credentials. Memory features work without
+a live computer. Agent features require Phren Hook and Herdr, and work without
+GitHub. Moshi is not required.
 
 
 HOW TO SIGN IN
 
-On the first screen, tap "Connect with a GitHub token" and paste the token
+Open Projects, tap "Connect with a GitHub token", and paste the token
 provided in the App Review Information above. The repository picker will
 then list the demo store; select it and the app syncs.
 
@@ -85,7 +87,7 @@ WHAT TO TRY
 1. Projects tab — the demo store's projects, findings, skills, instructions,
    and memory graph. Search or tap a graph node to explore its connections.
 2. Agents tab — optional live sessions and computer setup. The demo store
-   works without connecting a computer or installing Moshi.
+   works without connecting a computer. Agent setup works without GitHub.
 3. Tasks tab — Active opens first; switch to Backlog or Done to browse those
    lists. Tap task text for full details, a checkbox to complete or reopen,
    or long-press for edit and delete.
@@ -123,7 +125,9 @@ PERMISSIONS
 - Microphone and Speech Recognition: only for the optional voice-capture
   feature, requested at first use, and only while the user is dictating.
   On-device recognition is requested wherever the device supports it.
-- No location, contacts, photos, notifications, or tracking of any kind.
+- Photo attachments use the system photo picker; only chosen images are read
+  and sent when the user submits them. No whole-library photo access.
+- No location, contacts, or tracking of any kind.
 - App Tracking Transparency is not applicable; the app does not track.
 ```
 

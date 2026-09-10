@@ -11,7 +11,8 @@ struct ChatAttachmentDraft: Identifiable, Equatable {
 @MainActor private enum AgentChatDrafts {
     static var text: [String: String] = [:]
     static var attachments: [String: [ChatAttachmentDraft]] = [:]
-    static let store: AgentDraftStore? = {
+    static var revision: UInt64 = 0
+    static let store: AgentDraftRepository? = {
         #if DEBUG && targetEnvironment(simulator)
         if AppModel.isUITesting && !ProcessInfo.processInfo.arguments.contains("--chat-persistent-draft") { return nil }
         #endif
@@ -20,7 +21,7 @@ struct ChatAttachmentDraft: Identifiable, Equatable {
         #if DEBUG && targetEnvironment(simulator)
         if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--chat-clear-drafts") { try? FileManager.default.removeItem(at: root) }
         #endif
-        return AgentDraftStore(root: root)
+        return AgentDraftRepository(root: root)
     }()
 }
 
@@ -37,6 +38,21 @@ final class AgentChatModel {
     private(set) var sentAt: Date?
     private var submittedAfterLine = -1
     var liveActivity: String?
+    private var preferProgressActivity = false
+    var activityPhase: AgentChatProgress.Phase? {
+        if preferProgressActivity { return progress.phase }
+        switch liveActivity {
+        case "working": return .working
+        case "done": return .finished
+        case "idle": return progress.phase == .stopped ? .stopped : nil
+        case "blocked", "waiting", "unknown": return nil
+        default: return progress.phase
+        }
+    }
+    func acceptActivity(_ activity: String?) {
+        guard let activity else { return }
+        liveActivity = activity; preferProgressActivity = false
+    }
     var modelName: String?
     var questionsSupported = true
     var progressUnavailable = false
@@ -62,9 +78,14 @@ final class AgentChatModel {
     var receivedAt: Date?
     var deliveryStatus: String?
     var draftStorageError: String?
-    private var restoringDraft = false
-    var draft = "" { didSet { if let target { AgentChatDrafts.text[target.id] = draft; persistDraft() } } }
-    var attachments: [ChatAttachmentDraft] = [] { didSet { if let target { AgentChatDrafts.attachments[target.id] = attachments; persistDraft() } } }
+    private(set) var restoringDraft = false
+    private var draftSaveTask: Task<Void, Never>?
+    private var draftSaveImmediate = false
+    private var draftLoadTask: Task<Void, Never>?
+    private var draftGeneration = UUID()
+    private var draftRevision: UInt64 = 0
+    var draft = "" { didSet { if !restoringDraft, let target { AgentChatDrafts.text[target.id] = draft; persistDraft() } } }
+    var attachments: [ChatAttachmentDraft] = [] { didSet { if !restoringDraft, let target { AgentChatDrafts.attachments[target.id] = attachments; persistDraft() } } }
     var sentImages: [ChatAttachmentDraft] = []
     private var generation = UUID()
     private var streamTask: Task<Void, Never>?
@@ -73,29 +94,63 @@ final class AgentChatModel {
     func choose(_ pane: AgentChatPanes.Pane, session: LiveAgentSession) {
         do {
             let chosen = try pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id, muxID: session.host.muxID)
+            persistDraft(immediately: true)
+            draftLoadTask?.cancel()
+            let draftRun = UUID(); draftGeneration = draftRun
             target = chosen
             restoringDraft = true
-            defer { restoringDraft = false }
-            var saved = AgentDraftStore.Draft()
+            draft = ""; attachments = []
             draftStorageError = nil
-            do { saved = try AgentChatDrafts.store?.load(target: chosen.id) ?? saved }
-            catch { draftStorageError = error.localizedDescription }
-            draft = AgentChatDrafts.text[chosen.id] ?? saved.text
-            attachments = AgentChatDrafts.attachments[chosen.id] ?? saved.attachments.map { .init(attachment: $0) }
+            draftLoadTask = Task {
+                let saved: AgentDraftStore.Draft
+                do { saved = try await AgentChatDrafts.store?.load(target: chosen.id) ?? .init() }
+                catch {
+                    guard !Task.isCancelled, draftGeneration == draftRun else { return }
+                    draftStorageError = error.localizedDescription; saved = .init()
+                }
+                guard !Task.isCancelled, draftGeneration == draftRun else { return }
+                draft = AgentChatDrafts.text[chosen.id] ?? saved.text
+                attachments = AgentChatDrafts.attachments[chosen.id] ?? saved.attachments.map { .init(attachment: $0) }
+                AgentChatDrafts.text[chosen.id] = draft; AgentChatDrafts.attachments[chosen.id] = attachments
+                restoringDraft = false
+            }
             history = .init(); progress = .init(); reveal.finish(); hasTranscript = false
-            awaitingReply = false; sentAt = nil; liveActivity = nil; modelName = nil
+            awaitingReply = false; sentAt = nil; liveActivity = nil; modelName = nil; preferProgressActivity = false
             connected = false; error = nil; deliveryError = nil
             sentImages = []; needsAnswer = false; approval = nil; question = nil; answeredQuestions = []
         } catch { self.error = error.localizedDescription }
     }
-    private func persistDraft() {
+    private func persistDraft(immediately: Bool = false) {
         guard !restoringDraft, let target else { return }
-        do {
-            try AgentChatDrafts.store?.save(.init(text: draft, attachments: attachments.map(\.attachment)), target: target.id)
-            draftStorageError = nil
-        } catch { draftStorageError = error.localizedDescription }
+        if !draftSaveImmediate { draftSaveTask?.cancel() }
+        draftSaveImmediate = immediately
+        AgentChatDrafts.revision += 1
+        let revision = AgentChatDrafts.revision; draftRevision = revision
+        let saved = AgentDraftStore.Draft(text: draft, attachments: attachments.map(\.attachment))
+        draftSaveTask = Task {
+            do {
+                // Coalesce edits from this UI update, then persist promptly.
+                // A wall-clock debounce can lose the final edit on quick exit.
+                if !immediately { await Task.yield() }
+                try Task.checkCancellation()
+                try await AgentChatDrafts.store?.save(saved, target: target.id, revision: revision)
+                if self.target == target, draftRevision == revision { draftStorageError = nil }
+            } catch is CancellationError { }
+            catch { if self.target == target, draftRevision == revision { draftStorageError = error.localizedDescription } }
+        }
+    }
+    func flushDrafts() {
+        persistDraft(immediately: true)
+        let save = draftSaveTask
+        let lease = UIApplication.shared.beginBackgroundTask(withName: "Save agent draft")
+        Task {
+            await save?.value
+            if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) }
+        }
     }
     func chooseAnother() {
+        persistDraft(immediately: true)
+        draftLoadTask?.cancel(); draftGeneration = UUID(); restoringDraft = false
         progressTask?.cancel(); progressTask = nil
         streamTask?.cancel(); streamTask = nil; streamTarget = nil
         statusTask?.cancel(); statusTask = nil; interactionConnected = false; approval = nil
@@ -131,7 +186,7 @@ final class AgentChatModel {
                 }
                 if let target {
                     needsAnswer = try list.validate(target).needsAnswer || approval != nil
-                    if target.source == "copilot" { liveActivity = try list.validate(target).agentStatus }
+                    if !interactionConnected { acceptActivity(try list.validate(target).agentStatus) }
                     if needsAnswer { awaitingReply = false }
                     if streamTarget != target { beginStream(session, target: target, run: run) }
                 }
@@ -192,7 +247,9 @@ final class AgentChatModel {
     }
 
     func acceptProgress(_ frame: AgentChatTranscript) {
+        let previous = progress.activityLine
         progress.receive(frame)
+        if progress.activityLine != previous { preferProgressActivity = true }
         if frame.progressEvents.contains(where: { event in
             guard event.line > submittedAfterLine else { return false }
             switch event.value { case .started, .finished, .stopped: return true; default: return false }
@@ -213,16 +270,21 @@ final class AgentChatModel {
                 do {
                     #if DEBUG && targetEnvironment(simulator)
                     if AgentChatFixture.enabled {
+                        guard self.target == target, generation == run, statusGeneration == statusRun else { return }
                         approval = try AgentChatFixture.approval(target)
+                        if !ProcessInfo.processInfo.arguments.contains("--chat-streaming") {
+                            acceptActivity(try AgentChatFixture.panes(session).validate(target).agentStatus)
+                        }
                         interactionConnected = true
-                        return
+                        try await Task.sleep(for: .milliseconds(250))
+                        continue
                     }
                     #endif
                     for try await status in PhrenConnection.interactionUpdates(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target) {
                         try Task.checkCancellation()
                         guard self.target == target, generation == run, statusGeneration == statusRun else { return }
                         if awaitingReply, liveActivity != "working", status.activity == "working" { awaitingReply = false }
-                        approval = status.approval; questionsSupported = status.questionsSupported; liveActivity = status.activity; modelName = status.modelName; interactionConnected = true
+                        approval = status.approval; questionsSupported = status.questionsSupported; acceptActivity(status.activity); modelName = status.modelName; interactionConnected = true
                         if approval != nil || ["waiting", "blocked"].contains(status.activity ?? "") { awaitingReply = false }
                     }
                 } catch {}
@@ -264,6 +326,12 @@ final class AgentChatModel {
 
     var historyError: String?
 
+    func showLatest() {
+        history = .init(); reveal.finish(); hasTranscript = false
+        streamTask?.cancel(); streamTask = nil; streamTarget = nil
+        connected = false; loading = true; historyError = nil
+    }
+
     func loadOlder(_ session: LiveAgentSession) async {
         guard !loadingHistory, let target, let before = history.startLine, before > 0 else { return }
         loadingHistory = true; historyError = nil
@@ -271,7 +339,7 @@ final class AgentChatModel {
         do {
             let page: AgentChatTranscript
             #if DEBUG && targetEnvironment(simulator)
-            if AgentChatFixture.enabled { page = try AgentChatFixture.older(target) }
+            if AgentChatFixture.enabled { page = try AgentChatFixture.older(target, beforeLine: before) }
             else { page = try await PhrenConnection.chatHistory(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, beforeLine: before) }
             #else
             page = try await PhrenConnection.chatHistory(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, beforeLine: before)
@@ -279,7 +347,10 @@ final class AgentChatModel {
             guard !Task.isCancelled, self.target == target else { return }
             history.receive(page)
         } catch is CancellationError {
-        } catch { historyError = "Couldn't load earlier messages." }
+        } catch {
+            guard !Task.isCancelled, self.target == target else { return }
+            historyError = "Couldn't load earlier messages. Scroll up to retry."
+        }
     }
 
     func stop(_ session: LiveAgentSession) async {
@@ -346,6 +417,7 @@ final class AgentChatModel {
             }
             if sentImages.count > 16 { sentImages.removeFirst(sentImages.count - 16) }
             attachments.removeAll { submittedIDs.contains($0.id) }
+            persistDraft(immediately: true)
         } catch {
             awaitingReply = false
             deliveryError = "Delivery wasn't confirmed. Check the conversation before trying again. \(error.localizedDescription)"

@@ -6,10 +6,17 @@ public struct AgentTokenUsage: Equatable, Sendable {
     public let input: Int
     public let output: Int
     public let cachedInput: Int?
+    public let reasoningOutput: Int?
+    public var uncachedInput: Int? { cachedInput.map { input - $0 } }
 
-    static func read(_ value: [String: Any]?) -> Self? {
+    static func read(_ value: [String: Any]?, inputIncludesCache: Bool = true) -> Self? {
         guard let value, let input = count(value["input_tokens"]), let output = count(value["output_tokens"]) else { return nil }
-        return .init(input: input, output: output, cachedInput: count(value["cached_input_tokens"] ?? value["cache_read_input_tokens"]))
+        let cached = count(value["cached_input_tokens"] ?? value["cache_read_input_tokens"])
+        // Claude reports cache reads/writes separately; Codex includes them in input.
+        let totalInput = inputIncludesCache ? input : input + (cached ?? 0) + (count(value["cache_creation_input_tokens"]) ?? 0)
+        let reasoning = count(value["reasoning_output_tokens"])
+        guard (cached ?? 0) <= totalInput, (reasoning ?? 0) <= output else { return nil }
+        return .init(input: totalInput, output: output, cachedInput: cached, reasoningOutput: reasoning)
     }
     private static func count(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -33,7 +40,7 @@ public struct AgentChatProgressEvent: Equatable, Sendable {
         if source == "codex", raw["type"] as? String == "event_msg", let payload = raw["payload"] as? [String: Any] {
             switch payload["type"] as? String {
             case "task_started": return .init(line: line, value: .started(date(payload["started_at"], fallback: raw["timestamp"])))
-            case "task_complete": return .init(line: line, value: .finished(date(payload["completed_at"], fallback: raw["timestamp"])))
+            case "task_complete", "task_completed": return .init(line: line, value: .finished(date(payload["completed_at"], fallback: raw["timestamp"])))
             case "turn_aborted", "task_aborted": return .init(line: line, value: .stopped)
             case "token_count":
                 let info = payload["info"] as? [String: Any]
@@ -43,7 +50,7 @@ public struct AgentChatProgressEvent: Equatable, Sendable {
         }
         if source == "claude", raw["isMeta"] as? Bool != true, raw["isSidechain"] as? Bool != true,
            let message = raw["message"] as? [String: Any], message["role"] as? String == "assistant" {
-            return AgentTokenUsage.read(message["usage"] as? [String: Any]).map { .init(line: line, value: .usage($0)) }
+            return AgentTokenUsage.read(message["usage"] as? [String: Any], inputIncludesCache: false).map { .init(line: line, value: .usage($0)) }
         }
         if source == "copilot", raw["agentId"] == nil, let data = raw["data"] as? [String: Any] {
             switch raw["type"] as? String {
@@ -76,6 +83,7 @@ public struct AgentChatProgress: Sendable {
     public private(set) var startedAt: Date?
     public private(set) var finishedAt: Date?
     public private(set) var usage: AgentTokenUsage?
+    public private(set) var activityLine = -1
     private var latestLine = -1
     private var totalLines = 0
     public init() {}
@@ -86,9 +94,9 @@ public struct AgentChatProgress: Sendable {
         for event in frame.progressEvents.sorted(by: { $0.line < $1.line }) where event.line > latestLine {
             latestLine = event.line
             switch event.value {
-            case .started(let date): phase = .working; startedAt = date; finishedAt = nil; usage = nil
-            case .finished(let date): phase = .finished; finishedAt = date
-            case .stopped: phase = .stopped
+            case .started(let date): phase = .working; startedAt = date; finishedAt = nil; usage = nil; activityLine = event.line
+            case .finished(let date): phase = .finished; finishedAt = date; activityLine = event.line
+            case .stopped: phase = .stopped; activityLine = event.line
             case .usage(let value): usage = value
             }
         }

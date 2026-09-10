@@ -28,6 +28,23 @@ final class AgentIntegrationTests: XCTestCase {
         XCTAssertEqual(try reopened.load(target: "second").text, "Other computer")
         XCTAssertEqual(try AgentDraftStore(root: root).load(target: "first").text, "")
     }
+    func testDraftRepositoryRejectsDelayedSavesAfterNewerEditsAndClear() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = AgentDraftRepository(root: root)
+        let file = try AgentAttachment(name: "sample.png", data: Data(repeating: 1, count: 1024), isImage: true)
+        try await repository.save(.init(text: "newer", attachments: [file]), target: "first", revision: 2)
+        try await repository.save(.init(text: "delayed"), target: "first", revision: 1)
+        let latest = try await repository.load(target: "first")
+        XCTAssertEqual(latest.text, "newer"); XCTAssertEqual(latest.attachments, [file])
+        try await repository.save(.init(text: "other machine"), target: "second", revision: 3)
+        try await repository.save(.init(), target: "first", revision: 4)
+        try await repository.save(.init(text: "old text", attachments: [file]), target: "first", revision: 2)
+        XCTAssertEqual(try AgentDraftStore(root: root).load(target: "first").text, "")
+        try await repository.save(.init(text: "reattached", attachments: [file]), target: "first", revision: 5)
+        XCTAssertEqual(try AgentDraftStore(root: root).load(target: "first").attachments, [file])
+        XCTAssertEqual(try AgentDraftStore(root: root).load(target: "second").text, "other machine")
+    }
     func testCorruptOrFutureDraftCannotBeOverwrittenEvenWithoutLoadingFirst() throws {
         for future in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

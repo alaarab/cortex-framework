@@ -174,6 +174,30 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertEqual(saved?.token, "fixture-token")
         XCTAssertEqual(deletes, 0)
     }
+
+    func testNoGitHubCredentialStartsOnAgentsWithoutAccountRequests() async {
+        saved = nil
+        var requested = false
+        SessionURLProtocol.configure(.failure(.notConnectedToInternet), onRequest: { requested = true })
+        let model = makeModel()
+        await model.bootstrap()
+        XCTAssertEqual(model.phase, .signedOut)
+        XCTAssertEqual(model.selectedTab, .agents)
+        XCTAssertFalse(requested)
+    }
+
+    func testGitHubSignOutPreservesAgentPreferencesAndCurrentTab() async {
+        let connection = Data("saved-agent-connection-fixture".utf8)
+        defaults.set(connection, forKey: "sessions.live.preferences.v1")
+        let model = makeModel()
+        await model.bootstrap()
+        model.selectedTab = .agents
+        await model.signOut()
+        XCTAssertNil(saved)
+        XCTAssertEqual(model.phase, .signedOut)
+        XCTAssertEqual(model.selectedTab, .agents)
+        XCTAssertEqual(defaults.data(forKey: "sessions.live.preferences.v1"), connection)
+    }
 }
 
 private final class SessionURLProtocol: URLProtocol {

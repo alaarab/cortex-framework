@@ -37,7 +37,11 @@ import UIKit
         if flag("--chat-upload-fails") { throw LiveConnectionError.disconnected }
         return "/tmp/phren-fixture/" + attachment.uploadName
     }
-    static func older(_ target: AgentChatTarget) throws -> AgentChatTranscript {
+    static func older(_ target: AgentChatTarget, beforeLine: Int) throws -> AgentChatTranscript {
+        if flag("--chat-metadata-history"), beforeLine > 10 {
+            return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": "older", "source": target.source,
+                "entries": [], "startLine": 10, "totalLines": 22, "hasMore": true]), source: target.source)
+        }
         let raw: [String: Any] = ["type": "response_item", "payload": ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Earlier project discussion"]]]]
         return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": "older", "source": target.source, "entries": [["line": 0, "raw": raw]], "startLine": 0, "totalLines": flag("--chat-long-history") ? 42 : 22, "hasMore": false]), source: target.source)
     }
@@ -78,6 +82,12 @@ import UIKit
                 entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call_output", "output": output]]])
             }
             append("assistant", "The conversation has a quieter layout now. Commands and results stay together; tap the Shell row to see everything.\n\nThe terminal is one tap away in the header, and your draft stays with this session when you come back.")
+        }
+        if flag("--chat-diffs") {
+            let patch = "*** Begin Patch\n*** Update File: Theme.swift\n@@\n-let action = green\n+let action = phrenPurple\n*** End Patch"
+            entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "custom_tool_call", "name": "apply_patch", "input": patch]]])
+            let output = String(decoding: try JSONSerialization.data(withJSONObject: ["chunk_id": "fixture", "output": "Updated Theme.swift", "exit_code": 0]), as: UTF8.self)
+            entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call_output", "output": [["type": "input_text", "text": output]]]]])
         }
         if flag("--chat-markdown") { append("assistant", "# Changes\nHere is the fix:\n```swift\nlet color = \"cyan\"\n```\nReady to test.") }
         if flag("--chat-link") { append("assistant", "[Open linked page](https://example.org/phren-fixture)") }

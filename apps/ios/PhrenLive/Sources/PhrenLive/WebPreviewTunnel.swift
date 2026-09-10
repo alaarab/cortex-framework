@@ -1,5 +1,6 @@
 import Crypto
 import Foundation
+import Network
 import NIOCore
 import NIOPosix
 import NIOSSH
@@ -12,13 +13,22 @@ public enum WebPreviewError: LocalizedError, Equatable {
     }
 }
 
-/// A phone-loopback listener backed by one pinned SSH connection. Bytes pass
-/// through unchanged, including WebSocket upgrades, uploads, and TLS. The
+/// An authenticated, destination-bound CONNECT proxy over pinned SSH. After
+/// authorization, bytes pass unchanged, including WebSockets, uploads, and TLS. The
 /// browser owns its lifetime; no remote process or public listener is created.
 public final class WebPreviewTunnel: @unchecked Sendable {
     public let url: URL
+    public let proxyConfiguration: ProxyConfiguration
+    let proxyPort: Int
     private let state: PreviewTunnelState
-    private init(url: URL, state: PreviewTunnelState) { self.url = url; self.state = state }
+    private init(url: URL, proxyPort: Int, state: PreviewTunnelState) {
+        self.url = url; self.proxyPort = proxyPort; self.state = state
+        var proxy = ProxyConfiguration(httpCONNECTProxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(proxyPort))!))
+        proxy.applyCredential(username: "phren", password: state.secret)
+        proxy.allowFailover = false
+        proxy.matchDomains = ["phren-preview.localhost", "127.0.0.1", "localhost", "::1"]
+        proxyConfiguration = proxy
+    }
 
     public static func open(host: LiveHost, privateKey: Data, server: WebServer) async throws -> WebPreviewTunnel {
         try host.validate()
@@ -53,17 +63,14 @@ public final class WebPreviewTunnel: @unchecked Sendable {
                 let listener = ServerBootstrap(group: loop)
                     .childChannelOption(ChannelOptions.autoRead, value: false)
                     .childChannelInitializer { local in state.attach(local) }
-                // Preserving the port also supports apps which emit absolute localhost URLs.
-                let channel: Channel
-                do { channel = try await listener.bind(host: "127.0.0.1", port: server.port).get() }
-                catch { channel = try await listener.bind(host: "127.0.0.1", port: 0).get() }
+                let channel = try await listener.bind(host: "127.0.0.1", port: 0).get()
                 try await loop.submit {
                     state.listener = channel
                     if state.closed { channel.close(promise: nil) }
                 }.get()
                 try Task.checkCancellation()
                 guard channel.isActive, let port = channel.localAddress?.port else { throw LiveConnectionError.disconnected }
-                return WebPreviewTunnel(url: URL(string: "\(server.scheme)://127.0.0.1:\(port)/")!, state: state)
+                return WebPreviewTunnel(url: URL(string: "\(server.scheme)://phren-preview.localhost:\(server.port)/")!, proxyPort: port, state: state)
             } catch {
                 await state.loop.submit { state.close(); ready.finish(.failure(error)) }.getIgnoringFailure()
                 throw error
@@ -83,6 +90,7 @@ private final class PreviewTunnelState: @unchecked Sendable {
     let loop: EventLoop
     let port: Int
     let destination: String
+    let secret = UUID().uuidString + UUID().uuidString
     let ended: EventLoopPromise<Void>
     var parent: Channel?
     var listener: Channel?
@@ -124,6 +132,12 @@ private final class PreviewTunnelState: @unchecked Sendable {
         let id = ObjectIdentifier(local)
         clients[id] = local
         local.closeFuture.whenComplete { _ in self.clients.removeValue(forKey: id) }
+        return local.pipeline.addHandler(PreviewAuthorization(state: self)).flatMap {
+            local.setOption(ChannelOptions.autoRead, value: true)
+        }
+    }
+
+    func authorize(_ local: Channel) -> EventLoopFuture<Void> {
         return openChannel(local: local).flatMap { remote in
             guard !self.closed else { return remote.close() }
             return local.pipeline.addHandler(PreviewRelay(peer: remote)).flatMap {
@@ -134,6 +148,58 @@ private final class PreviewTunnelState: @unchecked Sendable {
             return self.loop.makeFailedFuture(error)
         }
     }
+}
+
+/// Authenticate before opening a remote channel. Credentials are consumed here
+/// and never reach the development server, URL, page scripts, or logs.
+private final class PreviewAuthorization: ChannelInboundHandler, RemovableChannelHandler {
+    typealias InboundIn = ByteBuffer
+    let state: PreviewTunnelState
+    var buffer = ByteBuffer()
+    var connecting = false
+    var timeout: Scheduled<Void>?
+    init(state: PreviewTunnelState) { self.state = state }
+    func handlerAdded(context: ChannelHandlerContext) {
+        timeout = context.eventLoop.scheduleTask(in: .seconds(10)) { context.close(promise: nil) }
+    }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var bytes = unwrapInboundIn(data); buffer.writeBuffer(&bytes)
+        guard buffer.readableBytes <= 65536 else { context.close(promise: nil); return }
+        guard !connecting, let range = buffer.readableBytesView.firstRange(of: [13, 10, 13, 10]) else { return }
+        let length = range.upperBound - buffer.readerIndex
+        guard let header = buffer.readString(length: length) else { context.close(promise: nil); return }
+        let lines = header.components(separatedBy: "\r\n")
+        let request = lines[0].split(separator: " ")
+        let authorities = ["phren-preview.localhost:\(state.port)", "127.0.0.1:\(state.port)", "localhost:\(state.port)", "[::1]:\(state.port)"]
+        let credentials = lines.dropFirst().compactMap { line -> String? in
+            let parts = line.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2, parts[0].lowercased() == "proxy-authorization" else { return nil }
+            return parts[1].trimmingCharacters(in: .whitespaces)
+        }
+        let expected = "Basic " + Data("phren:\(state.secret)".utf8).base64EncodedString()
+        guard credentials == [expected] else { reject(context, status: "407 Proxy Authentication Required", extra: "Proxy-Authenticate: Basic realm=\"Phren preview\"\r\n"); return }
+        guard request.count == 3, request[0] == "CONNECT", authorities.contains(String(request[1])), request[2] == "HTTP/1.1" else {
+            reject(context, status: "403 Forbidden"); return
+        }
+        connecting = true
+        state.authorize(context.channel).whenComplete { result in
+            switch result {
+            case .success:
+                context.writeAndFlush(NIOAny(IOData.byteBuffer(ByteBuffer(string: "HTTP/1.1 200 Connection Established\r\n\r\n"))), promise: nil)
+                if self.buffer.readableBytes > 0 { context.fireChannelRead(NIOAny(self.buffer)); context.fireChannelReadComplete() }
+                context.pipeline.removeHandler(self, promise: nil)
+            case .failure: context.close(promise: nil)
+            }
+        }
+    }
+    private func reject(_ context: ChannelHandlerContext, status: String, extra: String = "") {
+        connecting = true
+        context.writeAndFlush(NIOAny(IOData.byteBuffer(ByteBuffer(string: "HTTP/1.1 \(status)\r\n\(extra)Content-Length: 0\r\nConnection: close\r\n\r\n"))))
+            .whenComplete { _ in context.close(promise: nil) }
+    }
+    func handlerRemoved(context: ChannelHandlerContext) { timeout?.cancel() }
+    func channelInactive(context: ChannelHandlerContext) { timeout?.cancel(); context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
 
 private final class PreviewSSHEvents: ChannelInboundHandler {

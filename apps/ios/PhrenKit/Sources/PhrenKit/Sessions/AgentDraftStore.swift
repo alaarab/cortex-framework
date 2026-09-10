@@ -25,7 +25,7 @@ public final class AgentDraftStore {
         enum CodingKeys: String, CodingKey { case schemaVersion, target, text, files }
         init(target: String, draft: Draft) {
             self.target = target; text = draft.text
-            files = draft.attachments.map { File(id: $0.id, name: $0.name, image: $0.isImage, digest: AgentDraftStore.digest($0.data)) }
+            files = draft.attachments.map { File(id: $0.id, name: $0.name, image: $0.isImage, digest: $0.contentDigest) }
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -38,6 +38,8 @@ public final class AgentDraftStore {
     public let root: URL
     private var unreadable: Set<String> = []
     private var checked: Set<String> = []
+    private var writtenDigests: [URL: String] = [:]
+    private var writtenFiles: [String: Set<String>] = [:]
     public init(root: URL) { self.root = root }
     private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     private func directory(_ target: String) -> URL { root.appendingPathComponent(Self.digest(Data(target.utf8)), isDirectory: true) }
@@ -70,6 +72,7 @@ public final class AgentDraftStore {
             }
             let data = try Data(contentsOf: url)
             guard Self.digest(data) == entry.digest else { throw PhrenKitError.validation("A saved attachment couldn't be verified. Its file has been kept.") }
+            writtenDigests[url] = entry.digest
             return try AgentAttachment(id: entry.id, name: entry.name, data: data, isImage: entry.image)
         }
         return Draft(text: value.text, attachments: attachments)
@@ -84,31 +87,35 @@ public final class AgentDraftStore {
         let manager = FileManager.default, directory = directory(target)
         if draft.text.isEmpty && draft.attachments.isEmpty {
             if manager.fileExists(atPath: directory.path) { try manager.removeItem(at: directory) }
+            writtenDigests = writtenDigests.filter { $0.key.deletingLastPathComponent() != directory }
+            writtenFiles[target] = nil
             return
         }
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true
         var local = root; try local.setResourceValues(excluded)
         let filenames = Set(draft.attachments.map { $0.id.uuidString + ".bin" })
+        let changed = draft.attachments.filter { writtenDigests[directory.appendingPathComponent($0.id.uuidString + ".bin")] != $0.contentDigest }
         var total = 0
-        if let contents = manager.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
+        if !changed.isEmpty, let contents = manager.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
             for case let file as URL in contents {
                 let values = try file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
                 if values.isRegularFile == true { total += values.fileSize ?? 0 }
             }
         }
-        for attachment in draft.attachments {
+        for attachment in changed {
             let file = directory.appendingPathComponent(attachment.id.uuidString + ".bin")
-            if !manager.fileExists(atPath: file.path) {
-                guard total + attachment.data.count <= 256 * 1_024 * 1_024 else {
+            let previousBytes = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                guard previousBytes == 0 else { throw PhrenKitError.validation("This attachment changed after it was saved. Remove it and attach the new file again.") }
+                guard total - previousBytes + attachment.data.count <= 256 * 1_024 * 1_024 else {
                     throw PhrenKitError.validation("Agent drafts have reached 256 MB. Send or remove some attachments before saving more.")
                 }
                 try attachment.data.write(to: file, options: .atomic)
                 #if os(iOS)
                 try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: file.path)
                 #endif
-                total += attachment.data.count
-            }
+                total += attachment.data.count - previousBytes
+                writtenDigests[file] = attachment.contentDigest
         }
         let file = directory.appendingPathComponent("draft.json")
         if let issue = PersistedState.save(Document(target: target, draft: draft), to: file, document: "agent drafts") {
@@ -118,9 +125,26 @@ public final class AgentDraftStore {
         try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: file.path)
         #endif
         // Only collect orphaned blobs after the manifest is safely replaced.
-        for file in try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+        if writtenFiles[target] != filenames {
+          for file in try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
             if file.pathExtension == "bin", UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil,
-               !filenames.contains(file.lastPathComponent) { try manager.removeItem(at: file) }
+               !filenames.contains(file.lastPathComponent) { try manager.removeItem(at: file); writtenDigests[file] = nil }
+          }
+          writtenFiles[target] = filenames
         }
+    }
+}
+
+/// One serialized owner for filesystem work. Revisions reject delayed saves
+/// from a dismissed editor or an earlier debounce after a newer save/clear.
+public actor AgentDraftRepository {
+    private let store: AgentDraftStore
+    private var revisions: [String: UInt64] = [:]
+    public init(root: URL) { store = AgentDraftStore(root: root) }
+    public func load(target: String) throws -> AgentDraftStore.Draft { try store.load(target: target) }
+    public func save(_ draft: AgentDraftStore.Draft, target: String, revision: UInt64) throws {
+        guard revision > (revisions[target] ?? 0) else { return }
+        revisions[target] = revision
+        try store.save(draft, target: target)
     }
 }

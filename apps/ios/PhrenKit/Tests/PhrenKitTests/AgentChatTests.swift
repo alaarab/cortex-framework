@@ -42,6 +42,15 @@ final class AgentChatTests: XCTestCase {
         XCTAssertEqual(history.messages.map(\.line), [0, 1])
     }
 
+    func testEmptyFinalHistoryPageClosesPaginationWithoutLosingMessages() throws {
+        var history = AgentChatHistory()
+        let recent = Data(#"{"type":"backlog","source":"codex","startLine":8,"totalLines":9,"hasMore":true,"entries":[{"line":8,"raw":{"type":"response_item","payload":{"type":"message","role":"assistant","content":"Recent message"}}}]}"#.utf8)
+        history.receive(try AgentChatTranscript.read(recent, source: "codex"))
+        history.receive(try AgentChatTranscript.read(Data(#"{"type":"older","source":"codex","totalLines":9,"hasMore":false,"entries":[]}"#.utf8), source: "codex"))
+        XCTAssertFalse(history.hasMore)
+        XCTAssertEqual(history.messages.map(\.text), ["Recent message"])
+    }
+
     func testPaneIdentityRequiresTheExactAgentAndConversation() throws {
         let host = UUID()
         let list = try panes()
@@ -55,18 +64,33 @@ final class AgentChatTests: XCTestCase {
         XCTAssertThrowsError(try AgentChatTarget(hostID: host, workspaceID: "w7&tab=w8", tabID: "w7:t1", paneID: "w7:p1", source: "codex", sessionID: "session-one"))
     }
 
-    func testHistoryLimitStaysClosedAfterAReconnect() throws {
-        func page(_ lines: Range<Int>) throws -> AgentChatTranscript {
+    func testHistoryWindowKeepsPagingPastItsMemoryLimitDuringLiveUpdates() throws {
+        func page(_ lines: Range<Int>, kind: String = "backlog", total: Int = 5_000) throws -> AgentChatTranscript {
             let rows = lines.map { line in ["line": line, "raw": ["type": "response_item", "payload": ["type": "message", "role": "assistant", "content": "Message \(line)"]]] as [String: Any] }
-            return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": "backlog", "source": "codex", "entries": rows, "startLine": lines.lowerBound, "totalLines": 5_000, "hasMore": true]), source: "codex")
+            return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": kind, "source": "codex", "entries": rows, "startLine": lines.lowerBound, "totalLines": total, "hasMore": lines.lowerBound > 0]), source: "codex")
         }
         var history = AgentChatHistory()
         for start in stride(from: 0, to: 5_000, by: 1_000) { history.receive(try page(start..<(start + 1_000))) }
         XCTAssertEqual(history.messages.count, 4_000)
-        XCTAssertTrue(history.reachedLimit)
+        XCTAssertTrue(history.hasMore)
+        XCTAssertFalse(history.hasNewer)
+        history.receive(try page(500..<1_000, kind: "older"))
+        XCTAssertEqual(history.messages.first?.line, 500)
+        XCTAssertEqual(history.messages.last?.line, 4_499)
+        XCTAssertTrue(history.hasMore)
+        XCTAssertTrue(history.hasNewer)
+        history.receive(try page(5_000..<5_010, kind: "append", total: 5_010))
+        history.receive(try page(4_900..<5_010, total: 5_010))
+        XCTAssertEqual(history.messages.first?.line, 500, "Reconnect/live output must preserve the older window")
+        XCTAssertEqual(history.messages.last?.line, 4_499)
+        history.receive(try page(0..<500, kind: "older", total: 5_010))
+        XCTAssertEqual(history.messages.first?.line, 0)
+        XCTAssertEqual(history.messages.count, 4_000)
         XCTAssertFalse(history.hasMore)
-        history.receive(try page(1_000..<2_000))
-        XCTAssertFalse(history.hasMore)
+        XCTAssertTrue(history.hasNewer)
+        history.receive(try page(0..<2, total: 2))
+        XCTAssertFalse(history.hasNewer, "A replaced/truncated transcript resets the window")
+        XCTAssertEqual(history.messages.count, 2)
     }
 
     func testPaneListsRejectMismatchedLocationsAndDuplicateIDs() throws {

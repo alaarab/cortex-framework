@@ -188,6 +188,7 @@ final class AppModel {
     /// link (`phren://review`, `phren://tasks`) via `PhrenApp.onOpenURL`.
     var selectedTab: AppTab = .projects
     var showingMemoryMaintenance = false
+    var showingMemoryConnection = false
 
     /// Parsed `stores.yaml`, from whichever attached store actually carries
     /// the registry (see `refreshStoreRegistry`). Powers the claim-awareness
@@ -489,6 +490,14 @@ final class AppModel {
         guard phase == .loading else { return }
         #if DEBUG && targetEnvironment(simulator)
         if Self.isUITesting {
+            if ProcessInfo.processInfo.arguments.contains("--agents-without-github") {
+                let host = try! LiveHost(id: UUID(uuidString: "A1000000-0000-0000-0000-000000000001")!,
+                                        name: "Test Mac", address: "fixture.invalid", username: "fixture",
+                                        fingerprint: "SHA256:" + String(repeating: "A", count: 43))
+                UserDefaults(suiteName: "phren.ui-tests")!.set(try! LiveSessionPreferences.saving(host, in: Data()), forKey: "sessions.live.preferences.v1")
+                phase = .signedOut; selectedTab = .agents
+                return
+            }
             do {
                 // Keep discovery fixtures from changing later tests' connection setup.
                 let defaults = UserDefaults(suiteName: "phren.ui-tests")!
@@ -558,6 +567,7 @@ final class AppModel {
         }
         #endif
         guard let stored = credentials.load() else {
+            selectedTab = .agents
             phase = .signedOut
             return
         }

@@ -7,18 +7,17 @@ struct ChatActivityIndicator: View {
     let waiting: Bool
     let revealing: Bool
     let needsAnswer: Bool
-    let working: Bool
-    let progress: AgentChatProgress
-    private var busy: Bool { connected && !needsAnswer && (waiting || revealing || working || progress.phase == .working) }
+    let phase: AgentChatProgress.Phase?
+    private var busy: Bool { connected && !needsAnswer && (waiting || revealing || phase == .working) }
     private var label: String {
         if reconnecting { return "Reconnecting" }
         if !connected { return "Disconnected" }
         if needsAnswer { return "Waiting for your answer" }
         if waiting { return "Waiting for agent…" }
         if revealing { return "Receiving reply…" }
-        if working || progress.phase == .working { return "Agent is working" }
-        if progress.phase == .stopped { return "Stopped" }
-        if progress.phase == .finished { return "Finished" }
+        if phase == .working { return "Agent is working" }
+        if phase == .stopped { return "Stopped" }
+        if phase == .finished { return "Finished" }
         return "Ready"
     }
     var body: some View {

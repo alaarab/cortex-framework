@@ -2,19 +2,24 @@ import SwiftUI
 import PhrenKit
 
 struct OnboardingFlow: View {
+    var isPresented = false
     @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            switch model.phase {
-            case .signedOut:
-                WelcomeView()
-            case .pickingRepo:
-                RepoPickerView()
-            case .initialSync:
-                InitialSyncView()
-            default:
-                ProgressView()
+            Group {
+                switch model.phase {
+                case .signedOut: WelcomeView()
+                case .pickingRepo: RepoPickerView()
+                case .initialSync: InitialSyncView()
+                default: ProgressView("Loading memory…")
+                }
+            }
+            .toolbar {
+                if isPresented {
+                    ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                }
             }
         }
     }
@@ -31,24 +36,21 @@ struct WelcomeView: View {
     @State private var authTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            // The bobbing pixel-art mascot + the site's typewriter finding card.
-            PhrenMascotView(size: 130)
-            Text("phren")
-                .font(.system(.largeTitle, design: .monospaced).bold())
+        ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+            PhrenMascotView(size: 84, bobbing: false, glow: false)
+                .padding(.top, 20)
+            Text("Connect project memory")
+                .font(.system(.largeTitle).weight(.semibold))
                 .foregroundStyle(PhrenTheme.text)
-            Text("memory that travels with your agents")
-                .font(.callout.monospaced())
-                .foregroundStyle(PhrenTheme.lavender)
-                .multilineTextAlignment(.center)
-            TypewriterFindingCard()
-                .padding(.top, 4)
-            Text(model.authenticationMessage ?? "Connect GitHub to open your phren store. Your access token stays in this device's Keychain.")
-                .font(.footnote)
+            Text("Findings, skills, and tasks — synced with your GitHub repositories.")
+                .font(.callout)
                 .foregroundStyle(PhrenTheme.textMuted)
-                .multilineTextAlignment(.center)
-            Spacer()
+            Text("Agents and terminals work without GitHub. Connect memory whenever you're ready.")
+                .font(.footnote).foregroundStyle(PhrenTheme.textMuted)
+            if let message = model.authenticationMessage {
+                Text(message).font(.footnote).foregroundStyle(PhrenTheme.warning)
+            }
 
             if let code = deviceCode {
                 DeviceCodeView(code: code, polling: polling)
@@ -79,11 +81,15 @@ struct WelcomeView: View {
                 }
                 .buttonStyle(.bordered)
             }
-            .padding(.bottom)
+            .padding(.top, 8)
+            Text("Your sign-in is saved in this device's Keychain. Sync goes directly to GitHub.")
+                .font(.caption).foregroundStyle(PhrenTheme.textDim)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        }
         .background(PhrenTheme.bg)
+        .navigationTitle("Memory").navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showPATSheet) {
             PATSignInSheet()
         }

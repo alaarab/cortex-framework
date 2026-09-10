@@ -1,5 +1,6 @@
 import PhrenKit
 import PhrenLive
+import Network
 import SwiftUI
 import WebKit
 
@@ -91,11 +92,14 @@ private final class WebPreviewModel: NSObject, WKNavigationDelegate, WKUIDelegat
             #endif
             try Task.checkCancellation()
             guard generation == run else { return }
+            let previousBase = baseURL
+            baseURL = url
             if let view = webView, let previous = view.url {
-                if baseURL == url { view.reload() }
+                if let tunnel { view.configuration.websiteDataStore.proxyConfigurations = [tunnel.proxyConfiguration] }
+                if previousBase == url { view.reload() }
                 else {
                     var resume = URLComponents(url: previous, resolvingAgainstBaseURL: false)!
-                    if resume.host == baseURL?.host, resume.port == baseURL?.port { resume.port = url.port }
+                    if resume.host == previousBase?.host, resume.port == previousBase?.port { resume.port = url.port }
                     view.load(URLRequest(url: resume.url ?? url))
                 }
             } else {
@@ -103,6 +107,7 @@ private final class WebPreviewModel: NSObject, WKNavigationDelegate, WKUIDelegat
                 // Keep cookies and storage isolated to this preview, but retain
                 // them and the current page across background/reconnect cycles.
                 config.websiteDataStore = .nonPersistent()
+                if let tunnel { config.websiteDataStore.proxyConfigurations = [tunnel.proxyConfiguration] }
                 let view = WKWebView(frame: .zero, configuration: config)
                 view.navigationDelegate = self; view.uiDelegate = self
                 view.allowsBackForwardNavigationGestures = true
@@ -110,7 +115,6 @@ private final class WebPreviewModel: NSObject, WKNavigationDelegate, WKUIDelegat
                 webView = view
                 view.load(URLRequest(url: url))
             }
-            baseURL = url
             if let tunnel {
                 await withTaskCancellationHandler { await tunnel.waitUntilClosed() } onCancel: { tunnel.close() }
                 guard !Task.isCancelled, generation == run else { return }
@@ -159,13 +163,26 @@ private final class WebPreviewModel: NSObject, WKNavigationDelegate, WKUIDelegat
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { message = "The page closed. Reconnect to load it again." }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        let scheme = navigationAction.request.url?.scheme?.lowercased()
-        decisionHandler(["http", "https", "about"].contains(scheme ?? "") ? .allow : .cancel)
+        guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
+        if url.scheme == "about" { decisionHandler(.allow); return }
+        if isPreviewOrigin(url) { decisionHandler(.allow); return }
+        // External documents do not share the privileged preview. CDN resources
+        // still load normally; the proxy only matches loopback destinations.
+        if navigationAction.navigationType == .linkActivated, ["http", "https"].contains(url.scheme ?? "") {
+            UIApplication.shared.open(url)
+        }
+        decisionHandler(.cancel)
+    }
+    private func isPreviewOrigin(_ url: URL) -> Bool {
+        guard let baseURL else { return false }
+        return url.scheme == baseURL.scheme && url.port == baseURL.port && ["phren-preview.localhost", "127.0.0.1", "localhost", "[::1]"].contains(url.host ?? "")
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if navigationAction.targetFrame == nil, let scheme = navigationAction.request.url?.scheme,
-           ["http", "https"].contains(scheme) { webView.load(navigationAction.request) }
+        if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+            if isPreviewOrigin(url) { webView.load(navigationAction.request) }
+            else if ["http", "https"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
+        }
         return nil
     }
 }

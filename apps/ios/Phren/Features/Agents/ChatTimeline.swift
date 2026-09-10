@@ -28,24 +28,12 @@ struct ChatToolSummary {
 
     init(_ messages: [AgentChatMessage]) {
         let calls = messages.filter { $0.title != "Tool result" }
-        let names = calls.map { Self.name($0.title ?? "Tool") }
+        let presentations = calls.map { ToolPresentation(title: $0.title ?? "Tool", text: $0.text) }
+        let names = presentations.map(\.title)
         title = Set(names).count == 1 ? names[0] : calls.isEmpty ? "Tool results" : "Activity"
-        icon = title == "Shell" ? "terminal" : title == "Browse" ? "globe" : "wrench.and.screwdriver"
+        icon = title == "Shell" ? "terminal" : title == "Browse" ? "globe" : title == "Patch" ? "pencil.line" : "wrench.and.screwdriver"
         count = max(1, calls.isEmpty ? messages.count : calls.count)
-        let message = calls.last ?? messages.last
-        var text = message?.text ?? ""
-        if let data = text.data(using: .utf8), let fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            text = ["cmd", "command", "query", "q", "file_path", "path", "description"].compactMap { fields[$0] as? String }.first ?? text
-        }
-        preview = String(text.split(whereSeparator: \.isNewline).first?.trimmingCharacters(in: .whitespaces).prefix(180) ?? "")
-    }
-
-    private static func name(_ raw: String) -> String {
-        let name = raw.split(separator: ".").last.map(String.init) ?? raw
-        if ["exec_command", "bash", "shell", "Bash", "Shell", "write_stdin"].contains(name) { return "Shell" }
-        if ["exec", "parallel"].contains(name) { return "Tools" }
-        if name.contains("search") || name.contains("web") { return "Browse" }
-        return name.replacingOccurrences(of: "_", with: " ").capitalized
+        preview = presentations.last?.preview ?? messages.last.map { ToolPresentation(title: $0.title ?? "Tool result", text: $0.text).preview } ?? ""
     }
 }
 
@@ -77,25 +65,46 @@ struct ChatToolActivity: View {
                 .accessibilityHint("Show commands and results")
                 .accessibilityIdentifier("chat-tool-group:\(messages[0].id)")
             if expanded {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(messages) { message in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(message.title ?? "Tool activity").font(.caption.weight(.semibold))
-                                Spacer()
-                                Button("Copy tool details", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
-                                    .labelStyle(.iconOnly).frame(width: 36, height: 32)
-                            }.foregroundStyle(PhrenTheme.textMuted)
-                            ScrollView([.horizontal, .vertical]) {
-                                Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }.defaultScrollAnchor(.topLeading).frame(maxHeight: 220)
-                        }
+                        ToolDetailView(presentation: .init(title: message.title ?? "Tool activity", text: message.text))
                     }
-                }.padding(.horizontal, 14).padding(.bottom, 14)
+                }.padding(.horizontal, 10).padding(.bottom, 10)
             }
         }
         .background(PhrenTheme.toolPanel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(PhrenTheme.border, lineWidth: 0.5))
+    }
+}
+
+private struct ToolDetailView: View {
+    let presentation: ToolPresentation
+    @State private var showAll = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let patch = presentation.patch { CodeDiffView(patch: patch) }
+            else {
+                HStack {
+                    Text(presentation.title == "Tool Result" ? "Output" : presentation.title).fontWeight(.medium)
+                    Spacer()
+                    Button("Copy tool details", systemImage: "doc.on.doc") { UIPasteboard.general.string = presentation.body }
+                        .labelStyle(.iconOnly).frame(width: 36, height: 32)
+                }.font(.caption2).foregroundStyle(PhrenTheme.textMuted)
+                Text(showAll ? presentation.body : String(presentation.body.prefix(2_400)))
+                    .font(.system(.caption, design: .monospaced)).foregroundStyle(PhrenTheme.text)
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                if presentation.body.count > 2_400 {
+                    Button(showAll ? "Show less" : "Show full output") { showAll.toggle() }
+                        .font(.caption).foregroundStyle(PhrenTheme.accent).padding(.vertical, 4)
+                }
+            }
+            if presentation.raw != presentation.body {
+                DisclosureGroup("Raw details") {
+                    ScrollView([.horizontal, .vertical]) {
+                        Text(presentation.raw).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+                    }.frame(maxHeight: 180)
+                }.font(.caption2).foregroundStyle(PhrenTheme.textDim).padding(.vertical, 4)
+            }
+        }
     }
 }

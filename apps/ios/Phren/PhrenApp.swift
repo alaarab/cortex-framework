@@ -123,20 +123,10 @@ private struct ExternalURLTestCapture: ViewModifier {
 }
 
 struct RootView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        switch model.phase {
-        case .loading:
-            ProgressView("Loading…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(PhrenTheme.bg)
-        case .signedOut, .pickingRepo, .initialSync:
-            OnboardingFlow()
-        case .ready:
-            MainTabView()
-        }
-    }
+    // GitHub is a memory connection, not the app's authentication boundary.
+    // Keep this hierarchy stable when that connection expires or signs out,
+    // so SSH navigation, terminals, and in-flight chat are not torn down.
+    var body: some View { MainTabView() }
 }
 
 struct MainTabView: View {
@@ -145,16 +135,25 @@ struct MainTabView: View {
     var body: some View {
         @Bindable var model = model
         TabView(selection: $model.selectedTab) {
-            ProjectsView()
+            Group {
+                if model.phase == .ready { ProjectsView() }
+                else { OnboardingFlow() }
+            }
                 .tabItem { Label("Projects", systemImage: "square.grid.2x2") }
                 .tag(AppTab.projects)
             NavigationStack { LiveSessionsView() }
                 .tabItem { Label("Agents", systemImage: "waveform.path") }
                 .tag(AppTab.agents)
-            TasksView()
+            Group {
+                if model.phase == .ready { TasksView() }
+                else { MemoryConnectionPrompt(title: "Tasks") }
+            }
                 .tabItem { Label("Tasks", systemImage: "checklist") }
                 .tag(AppTab.tasks)
-            SearchView()
+            Group {
+                if model.phase == .ready { SearchView() }
+                else { MemoryConnectionPrompt(title: "Search memory") }
+            }
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 .tag(AppTab.search)
             SettingsView()
@@ -162,5 +161,30 @@ struct MainTabView: View {
                 .tag(AppTab.settings)
         }
         .sheet(isPresented: $model.showingMemoryMaintenance) { MemoryMaintenanceView() }
+        .sheet(isPresented: $model.showingMemoryConnection) {
+            OnboardingFlow(isPresented: true)
+        }
+        .onChange(of: model.phase) { _, phase in
+            if phase == .ready { model.showingMemoryConnection = false }
+        }
+    }
+}
+
+struct MemoryConnectionPrompt: View {
+    let title: String
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 18) {
+                Image(systemName: "brain").font(.system(size: 42)).foregroundStyle(PhrenTheme.accent)
+                Text("Connect your project memory").font(.title2.weight(.semibold))
+                Text("Use GitHub to sync findings, skills, and tasks. Your agents and terminals connect directly to your computers.")
+                    .font(.callout).foregroundStyle(PhrenTheme.textMuted).multilineTextAlignment(.center)
+                Button("Connect memory") { model.showingMemoryConnection = true }
+                    .buttonStyle(.borderedProminent).tint(PhrenTheme.accentSolid)
+                    .accessibilityIdentifier("connect-memory")
+            }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(PhrenTheme.bg).navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+        }
     }
 }

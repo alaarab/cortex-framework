@@ -56,11 +56,19 @@ struct LiveSessionsView: View {
                     Text("Keep Tailscale connected on both devices when you're away. Phren Hook connects your existing agents.")
                 }
                 Section("Agent setup") {
+                    if model.phase == .ready {
                     NavigationLink { SkillsView() } label: {
                         PhrenMenuRow(title: "Skills", icon: "wand.and.stars", color: PhrenTheme.lavender)
                     }
                     NavigationLink { AgentsView() } label: {
                         PhrenMenuRow(title: "Agent instructions", icon: "person.crop.rectangle.stack")
+                    }
+                    } else {
+                        Button {
+                            model.showingMemoryConnection = true
+                        } label: {
+                            Label("Connect memory for skills & instructions", systemImage: "brain")
+                        }
                     }
                 }
             }

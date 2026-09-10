@@ -44,6 +44,7 @@ struct AgentChatView: View {
     @State private var showingAttachments = false
     @State private var showingDictation = false
     @State private var showingAgentSwitcher = false
+    @State private var showingUsage = false
     @State private var previewImage: ChatAttachmentDraft?
     @State private var historyTask: Task<Void, Never>?
     @State private var bottomPosition: CGFloat = 0
@@ -120,9 +121,6 @@ struct AgentChatView: View {
                                 })
                                 .accessibilityIdentifier("chat-history")
                             }
-                            if model.history.reachedLimit {
-                                Text("Showing the most recent loaded history to keep this chat responsive.").font(.caption).foregroundStyle(PhrenTheme.textDim)
-                            }
                             ForEach(ChatTimelineEntry.group(model.messages)) { entry in
                                 if entry.isActivity {
                                     ChatToolActivity(messages: entry.messages).id(entry.id)
@@ -161,6 +159,7 @@ struct AgentChatView: View {
                 .contentShape(Rectangle())
                 .simultaneousGesture(TapGesture().onEnded { composing = false })
                 .modifier(ChatHistoryScrollObserver { near in
+                    if near && !nearHistoryTop && model.historyError != nil { requestedHistoryLine = nil }
                     nearHistoryTop = near
                     loadHistoryIfNeeded(proxy)
                 })
@@ -183,14 +182,20 @@ struct AgentChatView: View {
                 })
                 .onPreferenceChange(ChatBottomPosition.self) { bottomPosition = $0 }
                 .overlay(alignment: .bottomTrailing) {
-                    if !atBottom {
-                        Button { withAnimation { proxy.scrollTo("chat-bottom", anchor: .bottom) } } label: {
+                    if !atBottom || model.history.hasNewer {
+                        Button {
+                            if model.history.hasNewer {
+                                historyTask?.cancel(); historyTask = nil; requestedHistoryLine = nil
+                                model.showLatest(); refresh = UUID()
+                            }
+                            withAnimation { proxy.scrollTo("chat-bottom", anchor: .bottom) }
+                        } label: {
                             Image(systemName: "arrow.down").frame(width: 40, height: 40).background(PhrenTheme.surfaceRaised, in: Circle())
                         }.accessibilityLabel("Latest messages").padding(12)
                     }
                 }
                 .onChange(of: model.target?.id) { _, _ in
-                    historyTask?.cancel(); requestedHistoryLine = nil
+                    historyTask?.cancel(); historyTask = nil; requestedHistoryLine = nil
                     proxy.scrollTo("chat-bottom", anchor: .bottom)
                 }
                 .onChange(of: model.messages.last?.id) { _, _ in
@@ -209,8 +214,8 @@ struct AgentChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { visible = true }
-        .onDisappear { visible = false; sendTask?.cancel(); historyTask?.cancel() }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { sendTask?.cancel(); historyTask?.cancel() } }
+        .onDisappear { visible = false; sendTask?.cancel(); historyTask?.cancel(); model.flushDrafts() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { sendTask?.cancel(); historyTask?.cancel(); model.flushDrafts() } }
         .onChange(of: currentHost) { _, _ in sendTask?.cancel(); historyTask?.cancel() }
         .onChange(of: reduceMotion || voiceOver, initial: true) { _, instant in
             model.animateReplies = !instant
@@ -258,6 +263,36 @@ struct AgentChatView: View {
                 }, chooseSession: switchSession)
             }
         }
+        .sheet(isPresented: $showingUsage) {
+            if let usage = model.progress.usage {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text("Latest model response").font(.headline)
+                        Spacer()
+                        Button("Done") { showingUsage = false }
+                    }
+                    VStack(spacing: 10) {
+                        LabeledContent("Total input", value: usage.input.formatted())
+                            .accessibilityElement(children: .combine).accessibilityIdentifier("usage-total-input")
+                        if let cached = usage.cachedInput, let uncached = usage.uncachedInput {
+                            LabeledContent("Reused from cache", value: cached.formatted())
+                            LabeledContent("Uncached input", value: uncached.formatted())
+                        }
+                        Divider()
+                        LabeledContent("Output", value: usage.output.formatted())
+                            .accessibilityElement(children: .combine).accessibilityIdentifier("usage-output")
+                        if let reasoning = usage.reasoningOutput, reasoning > 0 {
+                            LabeledContent("Included reasoning", value: reasoning.formatted())
+                        }
+                    }.font(.subheadline).monospacedDigit()
+                    Text("Input includes conversation context, instructions, and tool results. Cached input is part of that total. These are tokens for one model response, not the whole conversation or your account quota.")
+                        .font(.footnote).foregroundStyle(PhrenTheme.textMuted)
+                }
+                .padding(24).foregroundStyle(PhrenTheme.text)
+                .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+                .presentationBackground(PhrenTheme.chatCanvas)
+            }
+        }
         .sheet(item: $previewImage) { item in
             NavigationStack {
                 if let image = UIImage(data: item.attachment.data) {
@@ -288,14 +323,25 @@ struct AgentChatView: View {
         let anchor = ChatTimelineEntry.group(model.messages).first?.id
         let target = model.target
         historyTask = Task {
-            defer { historyTask = nil }
             await model.loadOlder(session)
-            guard !Task.isCancelled, model.target == target else { return }
+            guard !Task.isCancelled, model.target == target else {
+                if model.target == target { historyTask = nil; requestedHistoryLine = nil }
+                return
+            }
             await Task.yield()
             if let anchor {
                 var transaction = Transaction(); transaction.disablesAnimations = true
                 withTransaction(transaction) { proxy.scrollTo(anchor, anchor: .top) }
             }
+            // A page may contain only lifecycle events. Recheck after layout
+            // settles so it can continue without another scroll gesture.
+            do { try await Task.sleep(for: .milliseconds(100)) } catch {
+                if model.target == target { historyTask = nil; requestedHistoryLine = nil }
+                return
+            }
+            guard model.target == target else { return }
+            historyTask = nil
+            loadHistoryIfNeeded(proxy)
         }
     }
 
@@ -310,8 +356,7 @@ struct AgentChatView: View {
                                           reconnecting: active && model.target != nil && !model.connected && !model.loading,
                                           waiting: model.awaitingReply, revealing: model.reveal.isRevealing,
                                           needsAnswer: model.needsAnswer || model.approval != nil,
-                                          working: selectedPane?.agentStatus == "working" || (model.interactionConnected && model.liveActivity == "working"),
-                                          progress: model.progress)
+                                          phase: model.activityPhase)
                     Text(selectedPane?.displayTitle ?? session.workspaceName)
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold)).lineLimit(1)
                 }
@@ -375,13 +420,7 @@ struct AgentChatView: View {
 
     @ViewBuilder private var tokenUsage: some View {
         if let usage = model.progress.usage {
-            Menu {
-                Text("Latest reported model response")
-                Text("Input: \(usage.input.formatted()) tokens")
-                Text("Output: \(usage.output.formatted()) tokens")
-                if let cached = usage.cachedInput { Text("Cached input: \(cached.formatted()) tokens") }
-                if let modelName = model.modelName { Text(modelName) }
-            } label: {
+            Button { showingUsage = true } label: {
                 Label("Token usage", systemImage: "chart.bar")
             }.accessibilityIdentifier("chat-token-usage").accessibilityLabel("Latest reported usage: \(usage.output) output tokens, \(usage.input) input tokens")
         } else if model.progressUnavailable {
@@ -494,6 +533,7 @@ struct AgentChatView: View {
             .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(PhrenTheme.border, lineWidth: 0.5) }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("chat-message-box")
+            .disabled(model.restoringDraft)
         }
         .buttonStyle(.plain).foregroundStyle(PhrenTheme.textSecondary)
         .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2)
@@ -507,7 +547,7 @@ struct AgentChatView: View {
     }
     private struct RunIdentity: Equatable { let active: Bool; let refresh: UUID }
     private var showsStop: Bool {
-        !model.needsAnswer && (selectedPane?.agentStatus == "working" || model.liveActivity == "working" || model.awaitingReply || model.progress.phase == .working)
+        !model.needsAnswer && (model.awaitingReply || model.activityPhase == .working)
             && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.attachments.isEmpty
     }
     private var primaryActionEnabled: Bool {

@@ -4,6 +4,20 @@ import PhrenKit
 
 @MainActor
 final class ChatStreamingTests: XCTestCase {
+    func testCurrentActivityOverridesHistoricalWorkingWithoutReplayingOldFrames() throws {
+        let model = AgentChatModel()
+        let started = try AgentChatTranscript.read(Data(#"{"type":"backlog","source":"codex","totalLines":2,"entries":[{"line":1,"raw":{"type":"event_msg","payload":{"type":"task_started"}}}]}"#.utf8), source: "codex")
+        model.accept(started)
+        XCTAssertEqual(model.activityPhase, .working)
+        model.acceptActivity("idle")
+        XCTAssertNil(model.activityPhase)
+        model.accept(started)
+        XCTAssertNil(model.activityPhase, "Reconnects must not revive stale working state")
+        model.acceptActivity("working")
+        let done = try AgentChatTranscript.read(Data(#"{"type":"append","source":"codex","totalLines":3,"entries":[{"line":2,"raw":{"type":"event_msg","payload":{"type":"task_completed"}}}]}"#.utf8), source: "codex")
+        model.accept(done)
+        XCTAssertEqual(model.activityPhase, .finished)
+    }
     func testNewTextAppearsProgressivelyAndAdditionalTextKeepsItsVisiblePrefix() throws {
         let model = AgentChatModel()
         model.accept(try frame("backlog", text: "History", line: 0))
