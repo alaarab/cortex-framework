@@ -2,14 +2,17 @@ import PhrenKit
 import SwiftUI
 
 struct ChatActivityIndicator: View {
+    let connected: Bool
+    let reconnecting: Bool
     let waiting: Bool
     let revealing: Bool
     let needsAnswer: Bool
     let working: Bool
     let progress: AgentChatProgress
-    let sentAt: Date?
-    private var busy: Bool { !needsAnswer && (waiting || revealing || working || progress.phase == .working) }
+    private var busy: Bool { connected && !needsAnswer && (waiting || revealing || working || progress.phase == .working) }
     private var label: String {
+        if reconnecting { return "Reconnecting" }
+        if !connected { return "Disconnected" }
         if needsAnswer { return "Waiting for your answer" }
         if waiting { return "Waiting for agent…" }
         if revealing { return "Receiving reply…" }
@@ -19,13 +22,13 @@ struct ChatActivityIndicator: View {
         return "Ready"
     }
     var body: some View {
-        HStack(spacing: 7) {
-            if busy { ProgressView().controlSize(.mini).tint(PhrenTheme.cyan).accessibilityHidden(true) }
-            else { Image(systemName: needsAnswer ? "pause.circle" : "checkmark.circle").accessibilityHidden(true) }
-            Text(label).accessibilityIdentifier("chat-activity")
-            if busy, let start = waiting ? sentAt : progress.startedAt, start <= .now {
-                Text(start, style: .timer).monospacedDigit().fixedSize().accessibilityLabel("Elapsed time")
-            }
-        }.font(.caption).foregroundStyle(needsAnswer ? PhrenTheme.warning : PhrenTheme.cyan)
+        Group {
+            if busy { ProgressView().controlSize(.mini).tint(PhrenTheme.cyan) }
+            else { Image(systemName: reconnecting ? "wifi.exclamationmark" : needsAnswer ? "pause.circle" : "circle.fill").font(.system(size: 9)) }
+        }
+        .frame(width: 12, height: 12)
+        .foregroundStyle(reconnecting || needsAnswer ? PhrenTheme.warning : connected ? PhrenTheme.cyan : PhrenTheme.textDim)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label).accessibilityIdentifier("chat-activity")
     }
 }

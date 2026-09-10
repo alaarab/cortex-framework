@@ -9,8 +9,20 @@ final class AgentChatTests: XCTestCase {
         XCTAssertFalse(item.uploadName.contains("/"))
         XCTAssertThrowsError(try AgentAttachment(name: "empty", data: Data()))
         XCTAssertThrowsError(try AgentAttachment(name: "huge", data: Data(repeating: 0, count: AgentAttachment.maximumBytes + 1)))
-        XCTAssertEqual(try AgentAttachment.uploadedPath(from: Data(#"{"ok":true,"path":"/tmp/moshi-upload-fixture/image.png"}"#.utf8)), "/tmp/moshi-upload-fixture/image.png")
+        XCTAssertEqual(try AgentAttachment.uploadedPath(from: Data(#"{"ok":true,"path":"/tmp/phren-upload-fixture/image.png"}"#.utf8)), "/tmp/phren-upload-fixture/image.png")
         XCTAssertThrowsError(try AgentAttachment.uploadedPath(from: Data(#"{"ok":true,"path":"/tmp/image\ncommand"}"#.utf8)))
+    }
+
+    func testUploadsAcceptOriginalPhrenHookResponseAndRejectExplicitFailures() throws {
+        let path = "/Users/agent/.local/share/phren/bridge/uploads/session/image.png"
+        XCTAssertEqual(try AgentAttachment.uploadedPath(from: JSONSerialization.data(withJSONObject: ["path": path])), path)
+        let responses: [[String: Any]] = [
+            ["ok": false, "path": path], ["ok": "true", "path": path], ["error": "Upload failed", "path": path],
+            ["path": "relative/image.png"], ["path": "/tmp/image\ncommand"], ["ok": true],
+        ]
+        for response in responses {
+            XCTAssertThrowsError(try AgentAttachment.uploadedPath(from: JSONSerialization.data(withJSONObject: response)))
+        }
     }
 
     func testStreamMergesOlderPagesAndReconnectsWithoutDuplicates() throws {

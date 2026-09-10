@@ -13,6 +13,11 @@ import UIKit
     static var sendAttempts = 0
     static var streamStarts: [String: Date] = [:]
     static var streamed: Set<String> = []
+    static var lastStreamLine: [String: Int] = [:]
+    static func beginStream(_ target: AgentChatTarget) {
+        streamed.remove(target.id)
+        lastStreamLine.removeValue(forKey: target.id)
+    }
     static let streamingReply = "The reply is arriving word by word. " + String(repeating: "You can follow the changes as they arrive without losing your place in the conversation. ", count: 8)
     static var stopped = false
     static var answered = false
@@ -129,8 +134,14 @@ import UIKit
             }
             if elapsed >= 9 { event(6, ["type": "task_complete", "completed_at": start.addingTimeInterval(9).timeIntervalSince1970]) }
         }
+        let totalLines = entries.count
+        let previousLine = lastStreamLine[target.id] ?? -1
+        lastStreamLine[target.id] = (entries.last?["line"] as? Int) ?? previousLine
+        // Match the hook: append each event once. Replaying the whole turn
+        // every 500 ms keeps rebuilding open menus and prevents UI quiescence.
+        let delta = kind == "backlog" ? entries : entries.filter { ($0["line"] as? Int ?? -1) > previousLine }
         return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": kind, "source": target.source,
-            "entries": entries, "startLine": 0, "totalLines": entries.count, "hasMore": false]), source: target.source)
+            "entries": delta, "startLine": 0, "totalLines": totalLines, "hasMore": false]), source: target.source)
     }
     private static func flag(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains(flag) }
 }

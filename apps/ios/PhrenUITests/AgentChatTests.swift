@@ -178,25 +178,34 @@ final class AgentChatTests: XCTestCase {
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         composer.tap(); composer.typeText("Show me the reply")
         app.buttons["chat-send"].tap()
-        let activity = app.staticTexts["chat-activity"]
-        XCTAssertTrue(app.staticTexts["Waiting for agent…"].waitForExistence(timeout: 3))
+        let activity = app.descendants(matching: .any).matching(identifier: "chat-activity").firstMatch
+        let header = app.descendants(matching: .any).matching(identifier: "chat-header").firstMatch
+        XCTAssertTrue(activity.waitForExistence(timeout: 3))
+        XCTAssertEqual(activity.label, "Waiting for agent…")
+        XCTAssertTrue(header.frame.contains(activity.frame), "Activity belongs in the existing header")
+        XCTAssertLessThanOrEqual(activity.frame.height, 16)
+        XCTAssertFalse(app.buttons["chat-token-usage"].exists, "Usage must not take space above the composer")
         capture(app, "Waiting for the agent to respond")
-        XCTAssertTrue(app.buttons["chat-token-usage"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Receiving reply…"].waitForExistence(timeout: 8))
+        let receiving = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Receiving reply…"), object: activity)
+        XCTAssertEqual(XCTWaiter.wait(for: [receiving], timeout: 8), .completed)
         let growing = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "The reply is arriving word by word.")).firstMatch
-        XCTAssertTrue(growing.exists)
+        XCTAssertTrue(growing.waitForExistence(timeout: 3))
         let partialCount = growing.label.count
         capture(app, "Reply appearing progressively")
         let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Finished"), object: activity)
         XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 15), .completed)
-        XCTAssertTrue(app.buttons["chat-token-usage"].label.contains("85 output tokens"))
+        XCTAssertFalse(app.buttons["chat-token-usage"].exists)
         let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "The reply is arriving word by word.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 5))
         XCTAssertTrue(reply.label.hasSuffix("conversation. "))
         XCTAssertGreaterThan(reply.label.count, partialCount, "The reply should grow after its first visible words")
         capture(app, "Completed streamed reply and reported tokens")
+        app.buttons["Chat options"].tap()
+        XCTAssertTrue(app.buttons["chat-token-usage"].waitForExistence(timeout: 5))
         app.buttons["chat-token-usage"].tap()
         XCTAssertTrue(app.buttons["Latest reported model response"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Output: 85 tokens"].exists)
+        XCTAssertTrue(app.buttons["Input: 128 tokens"].exists)
     }
 
     @MainActor
@@ -231,7 +240,6 @@ final class AgentChatTests: XCTestCase {
         capture(app, "Inline question in Phren")
         XCTAssertTrue(app.buttons["Send answer"].isEnabled)
         app.buttons["Send answer"].tap()
-        XCTAssertTrue(app.staticTexts["Answer sent"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Answer received in this conversation."].waitForExistence(timeout: 8))
     }
 
@@ -440,19 +448,21 @@ final class AgentChatTests: XCTestCase {
     }
 
     @MainActor
-    func testOfflineComposerShowsReconnectWithoutLosingDraft() {
+    func testOfflineReconnectLivesInHeaderMenuWithoutLosingDraft() {
         let app = launch(extra: ["--chat-offline"])
         app.buttons["live-chat:w7:w7:t9"].tap()
         XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 5))
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         composer.tap(); composer.typeText("Keep this while offline")
+        XCTAssertFalse(app.buttons["chat-reconnect"].exists)
+        app.buttons["Chat options"].tap()
         let reconnect = app.buttons["chat-reconnect"]
         XCTAssertTrue(reconnect.waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["chat-send"].isEnabled)
         reconnect.tap()
         XCTAssertEqual(composer.value as? String, "Keep this while offline")
         XCTAssertFalse(app.staticTexts["Received in codex on w7:p1: Keep this while offline"].exists)
-        capture(app, "Reconnect is visible beside the draft")
+        capture(app, "Reconnect keeps the composer clear")
     }
 
     @MainActor

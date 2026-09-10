@@ -155,8 +155,10 @@ final class AgentChatModel {
             do {
                 #if DEBUG && targetEnvironment(simulator)
                 if AgentChatFixture.enabled {
+                    AgentChatFixture.beginStream(target)
                     while !Task.isCancelled {
-                        accept(try AgentChatFixture.transcript(target))
+                        let frame = try AgentChatFixture.transcript(target)
+                        if frame.kind != .append || !frame.messages.isEmpty || !frame.progressEvents.isEmpty { accept(frame) }
                         try await Task.sleep(for: .milliseconds(500))
                     }
                     return

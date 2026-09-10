@@ -3,5 +3,5 @@
 import os
 import sys
 if len(sys.argv) > 1:
-    raise SystemExit("Use: npx --yes @phren/cli@0.2.11 bridge install")
-os.execvp("npx", ["npx", "--yes", "@phren/cli@0.2.11", "bridge", "install"])
+    raise SystemExit("Use: npx --yes @phren/cli@0.2.12 bridge install")
+os.execvp("npx", ["npx", "--yes", "@phren/cli@0.2.12", "bridge", "install"])

@@ -20,8 +20,12 @@ public struct AgentAttachment: Equatable, Sendable, Identifiable {
     }
 
     public static func uploadedPath(from data: Data) throws -> String {
+        // Phren Hook 0.2.11 returned a path without an `ok` field after a
+        // successful HTTP upload. Accept that protocol-v1 response as well,
+        // while rejecting explicit failures and unsafe paths.
         guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              value["ok"] as? Bool == true, let path = value["path"] as? String,
+              value["error"] == nil, value["ok"] == nil || value["ok"] as? Bool == true,
+              let path = value["path"] as? String,
               path.hasPrefix("/"), path.utf8.count <= 4_096,
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw PhrenKitError.validation("The computer did not return a usable attachment path.")

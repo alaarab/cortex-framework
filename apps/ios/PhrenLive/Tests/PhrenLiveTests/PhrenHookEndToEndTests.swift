@@ -4,6 +4,42 @@ import XCTest
 @testable import PhrenLive
 
 final class PhrenHookEndToEndTests: XCTestCase {
+    /// Round-trips a real image through SSH and the installed Node helper into
+    /// an inert receiver in our disposable server, never a user's agent.
+    func testInstalledHookUploadsImageAndDeliversItsPathThroughSSH() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let sshFixture = env["PHREN_HOOK_SSH_FIXTURE"], let uploadFixture = env["PHREN_HOOK_UPLOAD_FIXTURE"] else {
+            throw XCTSkip("Requires the isolated image upload receiver")
+        }
+        let sshDirectory = URL(fileURLWithPath: sshFixture)
+        let fixture = URL(fileURLWithPath: uploadFixture)
+        let destination = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: fixture.appendingPathComponent("target.json")))
+        guard destination["server"] == "phren-hook-standalone" else { throw PhrenKitError.validation("Only the isolated test server is allowed.") }
+        let key = try Data(contentsOf: sshDirectory.appendingPathComponent("device.raw"))
+        let publicKey = try String(contentsOf: sshDirectory.appendingPathComponent("host_key.pub"), encoding: .utf8)
+        let host = try LiveHost(name: "Image upload fixture", address: "127.0.0.1", port: 22866, username: NSUserName(),
+                               fingerprint: PhrenConnection.fingerprint(publicKey: publicKey), herdrSession: "phren-hook-standalone")
+        let target = try AgentChatTarget(hostID: host.id, workspaceID: XCTUnwrap(destination["workspace"]), tabID: XCTUnwrap(destination["tab"]),
+                                         paneID: XCTUnwrap(destination["pane"]), source: "codex", sessionID: XCTUnwrap(destination["session"]), muxID: host.muxID)
+        let original = try Data(contentsOf: fixture.appendingPathComponent("image.png"))
+        let image = try AgentAttachment(name: "Screenshot.png", data: original, isImage: true)
+        let uploaded = try await PhrenConnection.uploadChatAttachment(host: host, privateKey: key, target: target, attachment: image)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: uploaded)), original)
+        let attributes = try FileManager.default.attributesOfItem(atPath: uploaded)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        let prompt = "Inspect this test image\n\nAttached files on this computer:\n" + uploaded
+        try await PhrenConnection.sendChat(host: host, privateKey: key, target: target, text: prompt)
+        let log = fixture.appendingPathComponent("rollout-fixture-\(target.sessionID).jsonl")
+        var received = ""
+        for _ in 0..<30 {
+            received = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+            if received.contains(uploaded) { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(received.contains(uploaded), "The exact terminal receiver must receive the uploaded path")
+        try FileManager.default.removeItem(atPath: uploaded)
+    }
+
     /// Read-only opt-in check against the caller's exact live pane through the
     /// installed helper. No prompt or terminal input reaches that conversation.
     func testInstalledHelperReadsLiveConversationThroughPinnedSSH() async throws {

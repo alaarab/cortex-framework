@@ -288,7 +288,12 @@ struct AgentChatView: View {
             }.accessibilityLabel("Done").accessibilityIdentifier("chat-close")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
-                    Circle().fill(model.connected && active ? PhrenTheme.cyan : PhrenTheme.textDim).frame(width: 6, height: 6)
+                    ChatActivityIndicator(connected: model.connected && active,
+                                          reconnecting: active && model.target != nil && !model.connected && !model.loading,
+                                          waiting: model.awaitingReply, revealing: model.reveal.isRevealing,
+                                          needsAnswer: model.needsAnswer || model.approval != nil,
+                                          working: selectedPane?.agentStatus == "working" || (model.interactionConnected && model.liveActivity == "working"),
+                                          progress: model.progress)
                     Text(selectedPane?.displayTitle ?? session.workspaceName)
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold)).lineLimit(1)
                 }
@@ -310,6 +315,7 @@ struct AgentChatView: View {
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(PhrenTheme.borderStrong, lineWidth: 1))
         .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .accessibilityElement(children: .contain).accessibilityIdentifier("chat-header")
     }
 
     private var chatOptions: some View {
@@ -326,7 +332,9 @@ struct AgentChatView: View {
             }
             Button("Slash commands", systemImage: "slash.circle") { openCommandMenu() }
                 .disabled(model.target == nil || model.sending)
-            Button("Refresh conversation") { refresh = UUID() }
+            Button(model.connected ? "Refresh conversation" : "Reconnect") { refresh = UUID() }
+                .accessibilityIdentifier("chat-reconnect")
+            tokenUsage
             Button("Dictate message", systemImage: "mic") { showingDictation = true }
                 .disabled(model.target == nil || model.sending)
             if project != nil {
@@ -356,8 +364,7 @@ struct AgentChatView: View {
                 if let cached = usage.cachedInput { Text("Cached input: \(cached.formatted()) tokens") }
                 if let modelName = model.modelName { Text(modelName) }
             } label: {
-                Text("\(usage.output.formatted(.number.notation(.compactName))) out · \(usage.input.formatted(.number.notation(.compactName))) in")
-                    .font(.caption2.monospacedDigit()).foregroundStyle(PhrenTheme.textMuted)
+                Label("Token usage", systemImage: "chart.bar")
             }.accessibilityIdentifier("chat-token-usage").accessibilityLabel("Latest reported usage: \(usage.output) output tokens, \(usage.input) input tokens")
         } else if model.progressUnavailable {
             Menu {
@@ -397,24 +404,6 @@ struct AgentChatView: View {
                 SlashCommandMenu(source: model.target?.source ?? "", draft: model.draft,
                                  choose: { model.draft = $0 + " " }, openAll: openCommandMenu)
             }
-            if let status = model.deliveryStatus { Text(status).font(.caption).foregroundStyle(PhrenTheme.cyan) }
-            HStack(spacing: 8) {
-                if active, model.target != nil, !model.connected, !model.loading {
-                    HStack {
-                        Label("Reconnecting…", systemImage: "wifi.exclamationmark").font(.caption)
-                        Spacer()
-                        Button("Reconnect") { refresh = UUID() }
-                            .font(.caption.weight(.semibold)).accessibilityIdentifier("chat-reconnect")
-                    }.foregroundStyle(PhrenTheme.warning)
-                } else if model.connected, model.awaitingReply || model.reveal.isRevealing || model.needsAnswer || model.approval != nil || model.progress.phase != nil || selectedPane?.agentStatus == "working" || model.liveActivity == "working" {
-                    ChatActivityIndicator(waiting: model.awaitingReply, revealing: model.reveal.isRevealing,
-                                          needsAnswer: model.needsAnswer || model.approval != nil,
-                                          working: selectedPane?.agentStatus == "working" || (model.interactionConnected && model.liveActivity == "working"),
-                                          progress: model.progress, sentAt: model.sentAt)
-                }
-                Spacer(minLength: 2)
-                tokenUsage
-            }.lineLimit(1).padding(.horizontal, 6)
             if model.needsAnswer {
                 NavigationLink { HerdrTerminalView(host: session.host, session: session, target: model.target).toolbar(.visible, for: .navigationBar) } label: {
                     Label(model.approval != nil || model.question != nil ? "Or answer in Herdr" : "Answer in Herdr terminal", systemImage: "terminal")
@@ -472,6 +461,7 @@ struct AgentChatView: View {
                     .background(canSend ? PhrenTheme.cyan : PhrenTheme.borderStrong, in: Circle())
                     .disabled(!canSend)
                     .accessibilityLabel("Send message").accessibilityIdentifier("chat-send")
+                    .accessibilityValue(model.deliveryStatus ?? "")
                     .keyboardShortcut(.return, modifiers: .command)
                 }
                 .padding(.horizontal, 6).padding(.bottom, 4)
