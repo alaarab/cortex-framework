@@ -6,8 +6,8 @@ struct HerdrWorkspacesView: View {
     let hostID: UUID
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
     @Environment(\.scenePhase) private var scenePhase
-    @State private var snapshot: MoshiWorkspaces?
-    @State private var servers: [MoshiConnection.HerdrServer] = []
+    @State private var snapshot: LiveWorkspaces?
+    @State private var servers: [PhrenConnection.HerdrServer] = []
     @State private var error: String?
     @State private var busy = false
     @State private var visible = false
@@ -48,7 +48,7 @@ struct HerdrWorkspacesView: View {
                     ForEach(snapshot.groups) { group in
                         Section {
                             ForEach(group.children) { tab in
-                                let session = DiscoveredMoshiSession(host: host, workspaceID: group.id, workspaceName: group.label, tab: tab)
+                                let session = LiveAgentSession(host: host, workspaceID: group.id, workspaceName: group.label, tab: tab)
                                 NavigationLink { HerdrPanesView(session: session) } label: {
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text(tab.displayTitle).font(.headline).lineLimit(2)
@@ -98,10 +98,10 @@ struct HerdrWorkspacesView: View {
             do {
                 #if DEBUG && targetEnvironment(simulator)
                 if AgentChatFixture.enabled {
-                    servers = try JSONDecoder().decode([MoshiConnection.HerdrServer].self, from: Data(#"[{"id":"herdr:default","kind":"herdr","session":"default","running":true},{"id":"herdr:work","kind":"herdr","session":"work","running":true}]"#.utf8))
-                } else { servers = try await MoshiConnection.herdrServers(host: host, privateKey: DeviceSSHKey.load(host.id)) }
+                    servers = try JSONDecoder().decode([PhrenConnection.HerdrServer].self, from: Data(#"[{"id":"herdr:default","kind":"herdr","session":"default","running":true},{"id":"herdr:work","kind":"herdr","session":"work","running":true}]"#.utf8))
+                } else { servers = try await PhrenConnection.herdrServers(host: host, privateKey: DeviceSSHKey.load(host.id)) }
                 #else
-                servers = try await MoshiConnection.herdrServers(host: host, privateKey: DeviceSSHKey.load(host.id))
+                servers = try await PhrenConnection.herdrServers(host: host, privateKey: DeviceSSHKey.load(host.id))
                 #endif
                 while !Task.isCancelled {
                     let value = try await LiveHostMonitor.fetch(host)
@@ -112,13 +112,13 @@ struct HerdrWorkspacesView: View {
         }
         .refreshable { refresh = UUID() }
     }
-    private func perform(_ operation: MoshiConnection.HerdrOperation, host: LiveHost, workspace: String? = nil, tab: String? = nil, label: String? = nil, cwd: String? = nil) {
+    private func perform(_ operation: PhrenConnection.HerdrOperation, host: LiveHost, workspace: String? = nil, tab: String? = nil, label: String? = nil, cwd: String? = nil) {
         guard !busy, active, self.host == host else { return }
         busy = true; error = nil
         action = Task {
             defer { busy = false }
             do {
-                try await MoshiConnection.herdrAction(host: host, privateKey: DeviceSSHKey.load(host.id), operation: operation,
+                try await PhrenConnection.herdrAction(host: host, privateKey: DeviceSSHKey.load(host.id), operation: operation,
                                                      workspaceID: workspace, tabID: tab, label: label, cwd: cwd)
                 refresh = UUID()
             } catch { self.error = "Action wasn't confirmed. Refresh before trying again. \(error.localizedDescription)" }
@@ -128,7 +128,7 @@ struct HerdrWorkspacesView: View {
 }
 
 private struct HerdrPanesView: View {
-    let session: DiscoveredMoshiSession
+    let session: LiveAgentSession
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
     @State private var panes: [AgentChatPanes.Pane] = []
@@ -142,7 +142,7 @@ private struct HerdrPanesView: View {
             Section {
                 Text("\(session.host.name) · \(session.host.herdrSession ?? "default")").font(.caption).foregroundStyle(PhrenTheme.textMuted)
                 NavigationLink { HerdrTerminalView(host: session.host, session: session) } label: { Label("Open tab in terminal", systemImage: "terminal") }
-                AgentConversationLink(session: session, honorsPreference: false) { Label("Chat with agent", systemImage: "bubble.left.and.bubble.right") }
+                AgentConversationLink(session: session) { Label("Chat with agent", systemImage: "bubble.left.and.bubble.right") }
             }
             if let error { Text(error).foregroundStyle(PhrenTheme.warning) }
             ForEach(panes) { pane in
@@ -164,9 +164,9 @@ private struct HerdrPanesView: View {
                     defer { creating = false }
                     do {
                         let key = try DeviceSSHKey.load(session.host.id)
-                        _ = try await MoshiConnection.chatPanes(host: session.host, privateKey: key, workspaceID: session.workspaceID, tabID: session.tab.id)
+                        _ = try await PhrenConnection.chatPanes(host: session.host, privateKey: key, workspaceID: session.workspaceID, tabID: session.tab.id)
                         try Task.checkCancellation()
-                        try await MoshiConnection.herdrAction(host: session.host, privateKey: key, operation: .create, workspaceID: session.workspaceID, tabID: session.tab.id)
+                        try await PhrenConnection.herdrAction(host: session.host, privateKey: key, operation: .create, workspaceID: session.workspaceID, tabID: session.tab.id)
                     } catch { self.error = "Pane creation wasn't confirmed. Refresh before trying again. \(error.localizedDescription)" }
                 }
             }.disabled(!active || creating)

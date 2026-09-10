@@ -38,7 +38,7 @@ extension LiveSessionPreferences {
 
 /// The tab selected on a known computer. Its destination comes from the hook's
 /// workspace and (when needed) tab IDs, never the agent `sessionId` or label.
-public struct DiscoveredMoshiSession: Equatable, Identifiable, Sendable {
+public struct LiveAgentSession: Equatable, Identifiable, Sendable {
     public struct ID: Hashable, Sendable {
         public let hostID: UUID
         public let workspace: String
@@ -49,7 +49,7 @@ public struct DiscoveredMoshiSession: Equatable, Identifiable, Sendable {
     public let workspaceID: String
     public let workspaceName: String
     public let workspaceTabCount: Int?
-    public let tab: MoshiWorkspaces.Tab
+    public let tab: LiveWorkspaces.Tab
     public var id: ID { ID(hostID: host.id, workspace: workspaceID, tab: tab.id, muxID: host.muxID) }
 
     public func matches(_ query: String, projectName: String? = nil) -> Bool {
@@ -59,36 +59,19 @@ public struct DiscoveredMoshiSession: Equatable, Identifiable, Sendable {
         return terms.allSatisfy { text.localizedCaseInsensitiveContains($0) }
     }
 
-    public init(host: LiveHost, workspaceID: String, workspaceName: String, tab: MoshiWorkspaces.Tab,
+    public init(host: LiveHost, workspaceID: String, workspaceName: String, tab: LiveWorkspaces.Tab,
                 workspaceTabCount: Int? = nil) {
         self.host = host; self.workspaceID = workspaceID; self.workspaceName = workspaceName; self.tab = tab
         self.workspaceTabCount = workspaceTabCount
     }
 
-    public func link() throws -> MoshiSessionLink {
-        guard !workspaceID.isEmpty, !tab.id.isEmpty,
-              workspaceID == workspaceID.trimmingCharacters(in: .whitespacesAndNewlines),
-              tab.id == tab.id.trimmingCharacters(in: .whitespacesAndNewlines) else {
-            throw PhrenKitError.validation("This session has no usable workspace or tab destination.")
-        }
-        // On a one-tab workspace the workspace identifies the entire target.
-        // Avoid Moshi's extra tab-refinement transition after resuming a card.
-        // Unknown counts retain exact tab selection; never infer from the label.
-        return try MoshiSessionLink(multiplexer: .herdr, session: host.herdrSession == "default" ? "" : host.herdrSession ?? "", workspace: workspaceID,
-                                    tab: workspaceTabCount == 1 ? "" : tab.id)
-    }
 
-    /// Moshi's public link has no host selector. Workspace IDs can be reused on
-    /// other computers, so a known collision must not trigger an automatic open.
-    public func hasHostCollision(in sessions: [Self]) -> Bool {
-        sessions.contains { $0.host.id != host.id && $0.workspaceID == workspaceID }
-    }
 }
 
-extension MoshiWorkspaces {
-    public func sessions(on host: LiveHost) -> [DiscoveredMoshiSession] {
+extension LiveWorkspaces {
+    public func sessions(on host: LiveHost) -> [LiveAgentSession] {
         groups.flatMap { group in
-            group.children.map { DiscoveredMoshiSession(host: host, workspaceID: group.id, workspaceName: group.label,
+            group.children.map { LiveAgentSession(host: host, workspaceID: group.id, workspaceName: group.label,
                                                        tab: $0, workspaceTabCount: group.children.count) }
         }
     }

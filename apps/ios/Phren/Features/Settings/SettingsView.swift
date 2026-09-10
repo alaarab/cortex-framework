@@ -7,7 +7,6 @@ struct SettingsView: View {
     @State private var confirmSignOut = false
     @State private var showAddStore = false
     @State private var removingStore: StoreDescriptor?
-    @AppStorage("agents.preferMoshi.v1") private var preferMoshi = false
     /// The same writable (store, project) list the App Intents resolve
     /// against — read through `PhrenCapture` rather than rebuilt from
     /// `mergedProjects` so the picker can't offer a destination capture
@@ -69,13 +68,10 @@ struct SettingsView: View {
                     }
                 }
 
-                Section {
-                    Picker("Open agents in", selection: $preferMoshi) {
-                        Text("Phren chat").tag(false)
-                        Text("Moshi").tag(true)
-                    }.accessibilityIdentifier("agent-chat-preference")
-                } header: { Text("Agent conversations") } footer: {
-                    Text("Phren chats with your existing Codex, Claude Code, and GitHub Copilot sessions. Herdr terminals and workspace controls are built into Phren. Moshi is optional.")
+                Section("Agent connections") {
+                    NavigationLink("Computers & Phren Hook") { LiveSessionsView() }
+                    Text("Chat, terminals, and project memory stay together in Phren. Connect the agents already running on your computers.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section("Account") {

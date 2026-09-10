@@ -50,15 +50,16 @@ final class SessionDetailsTests: XCTestCase {
     }
 
     @MainActor
-    func testDetailsExposeMetadataProjectAndTheCorrectMoshiDestination() {
-        let app = launch(extra: ["--capture-moshi-links"])
+    func testDetailsExposeMetadataProjectAndNativeChat() {
+        let app = launch(extra: ["--native-chat-fixture"])
         app.buttons["live-detail:w7:w7:t9"].tap()
         let title = app.navigationBars["Session details"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Polish the phone app"].exists)
         capture(app, "Session details and project shortcuts")
         app.buttons["session-detail-open"].tap()
-        app.assertMoshiOpened("moshi://herdr?workspace=w7")
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
+        app.buttons["chat-close"].tap()
         app.buttons["session-detail-project"].tap()
         XCTAssertTrue(app.navigationBars["phone · brain"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.element(boundBy: 0).tap()

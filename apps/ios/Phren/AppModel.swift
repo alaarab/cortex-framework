@@ -492,7 +492,6 @@ final class AppModel {
             do {
                 // Keep discovery fixtures from changing later tests' connection setup.
                 let defaults = UserDefaults(suiteName: "phren.ui-tests")!
-                defaults.set(ProcessInfo.processInfo.arguments.contains("--prefer-moshi"), forKey: "agents.preferMoshi.v1")
                 let fixtureHostIDs = ["A1000000-0000-0000-0000-000000000001", "A1000000-0000-0000-0000-000000000002"].map { UUID(uuidString: $0)! }
                 if !ProcessInfo.processInfo.arguments.contains("--automatic-sessions-fixture"),
                    let data = defaults.data(forKey: "sessions.live.preferences.v1"),
@@ -526,7 +525,6 @@ final class AppModel {
                             defaults.set(try LiveSessionPreferences.saving(remote, in: defaults.data(forKey: "sessions.live.preferences.v1")!),
                                          forKey: "sessions.live.preferences.v1")
                         }
-                        defaults.set(Data(), forKey: "sessions.moshi.links.v1")
                     }
                     if ProcessInfo.processInfo.arguments.contains("--workflow-fixture") {
                         let longTask = "Large migration plan. " + String(repeating: "Update the shared modules and verify behavior across projects. ", count: 18) + "END OF PLAN"

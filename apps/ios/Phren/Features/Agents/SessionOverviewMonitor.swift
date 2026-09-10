@@ -13,7 +13,7 @@ final class SessionOverviewMonitor {
     struct Group: Identifiable {
         let id: String
         let title: String
-        let sessions: [DiscoveredMoshiSession]
+        let sessions: [LiveAgentSession]
         let fresh: Bool
     }
 
@@ -58,7 +58,7 @@ final class SessionOverviewMonitor {
 
     func groups(at date: Date, query: String, preferences: LiveSessionPreferences?, projects: [SessionProject]) -> [Group] {
         guard ready else { return [] }
-        var live: [DiscoveredMoshiSession] = [], previous: [DiscoveredMoshiSession] = []
+        var live: [LiveAgentSession] = [], previous: [LiveAgentSession] = []
         for computer in computers {
             let sessions = (computer.monitor.snapshot?.sessions(on: computer.host) ?? []).filter { session in
                 let project = preferences?.projectMatch(hostID: computer.id, cwd: session.tab.cwd, projects: projects)
@@ -66,7 +66,7 @@ final class SessionOverviewMonitor {
             }
             if computer.monitor.isFresh(at: date) { live += sessions } else { previous += sessions }
         }
-        let order: [(MoshiWorkspaces.Tab.Activity, String)] = [
+        let order: [(LiveWorkspaces.Tab.Activity, String)] = [
             (.working, "Working"), (.waiting, "Needs input"), (.error, "Needs attention"),
             (.idle, "Idle"), (.done, "Done"), (.unknown, "Other sessions"),
         ]
@@ -82,7 +82,7 @@ final class SessionOverviewMonitor {
 
     func connectedCount(at date: Date) -> Int { ready ? computers.filter { $0.monitor.isFresh(at: date) }.count : 0 }
 
-    private static func ordered(_ lhs: DiscoveredMoshiSession, _ rhs: DiscoveredMoshiSession) -> Bool {
+    private static func ordered(_ lhs: LiveAgentSession, _ rhs: LiveAgentSession) -> Bool {
         (lhs.host.name.lowercased(), lhs.host.id.uuidString, lhs.workspaceName.lowercased(), lhs.tab.id)
             < (rhs.host.name.lowercased(), rhs.host.id.uuidString, rhs.workspaceName.lowercased(), rhs.tab.id)
     }

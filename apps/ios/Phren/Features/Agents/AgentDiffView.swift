@@ -3,7 +3,7 @@ import PhrenLive
 import SwiftUI
 
 struct AgentDiffView: View {
-    let session: DiscoveredMoshiSession
+    let session: LiveAgentSession
     let target: AgentChatTarget
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
@@ -58,9 +58,9 @@ struct AgentDiffView: View {
                 #if DEBUG && targetEnvironment(simulator)
                 if AgentChatFixture.enabled {
                     result = try AgentRepositoryDiff.read(Data(#"{"root":"/work/phone","launchPath":"/work/phone","branch":"main","files":[{"path":"Theme.swift","status":"modified","sections":[{"id":"theme","kind":"unstaged","binary":false,"patch":"@@ -1 +1 @@\n-let accent = purple\n+let accent = cyan"}]}]}"#.utf8))
-                } else { result = try await MoshiConnection.repositoryDiff(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target) }
+                } else { result = try await PhrenConnection.repositoryDiff(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target) }
                 #else
-                result = try await MoshiConnection.repositoryDiff(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target)
+                result = try await PhrenConnection.repositoryDiff(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target)
                 #endif
                 try Task.checkCancellation(); diff = result
             } catch { if !Task.isCancelled { self.error = error.localizedDescription } }

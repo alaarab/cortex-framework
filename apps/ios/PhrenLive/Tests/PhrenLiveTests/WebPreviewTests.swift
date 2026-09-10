@@ -76,7 +76,7 @@ final class WebPreviewTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["PHREN_TEST_WEB_SERVERS"] == "1" else { throw XCTSkip("Optional real helper and app check") }
         let relay = try await ChatRelaySSH.start()
         defer { Task { try? await relay.close() } }
-        let servers = try await MoshiConnection.webServers(host: relay.host(), privateKey: relay.deviceKey.rawRepresentation)
+        let servers = try await PhrenConnection.webServers(host: relay.host(), privateKey: relay.deviceKey.rawRepresentation)
         guard let server = servers.first(where: { $0.scheme == "http" }) else { return XCTFail("Expected a local fixture app") }
         let webRelay = try await ChatRelaySSH.start(forwardPorts: [server.port: server.port])
         defer { Task { try? await webRelay.close() } }

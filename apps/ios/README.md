@@ -36,7 +36,7 @@ or change the queue. Individual triage is still available from the filter menu.
 sync layer — so the app talks straight to the GitHub REST API. There is no
 phren backend. The GitHub token is stored in the device Keychain and sent only
 to GitHub. Optional live sessions use a separate SSH connection to a computer
-the user adds, reusing its installed Moshi hook.
+the user adds, using its private Phren Hook service.
 
 ```
 apps/ios/
@@ -245,8 +245,8 @@ with links to each scope's skills. The app edits the canonical store
 on the computer. Changes reach linked agents after the computer syncs, and
 generated mirrors refresh when phren links the project or its MCP poller pulls. This screen manages
 agent setup. **Live sessions** separately reads running Herdr tabs through the
-computer's Moshi hook. Hook configuration remains computer-local.
-See [agent connection design notes](AGENT_CONNECTIONS.md) for the Moshi/Herdr path.
+computer's Phren Hook. Hook configuration remains computer-local.
+See [agent connection design notes](AGENT_CONNECTIONS.md) for the Phren Hook/Herdr path.
 See [iPhone design notes](DESIGN.md) for session density, terminal gestures, and keyboard layout.
 
 Editors keep a separate draft during live refreshes and confirm before
@@ -259,297 +259,83 @@ queued files and their original SHAs until flush can check them. Pending queue
 schema 2 added guarded authored edits; schema 3 adds individual skill switches.
 Schema 1 and 2 queues upgrade while retaining all existing operations.
 
-### Native agent chat
+### Phren Hook and native agent connections
 
-Tap a live agent card to read and reply to its existing Codex, Claude Code, or GitHub Copilot CLI
-conversation inside Phren. **Project session → Chat with agent** and the graph's
-**Session → Chat with agent** discover the project's running sessions too. If a
-tab contains several supported agents, choose its pane before chatting.
-
-Chat uses that computer's pinned SSH connection, workspace, tab, pane, provider,
-and conversation ID. It rechecks the pane before sending, so switching computers
-in Moshi cannot redirect a native reply. **Settings → Agent conversations → Open
-agents in** makes Moshi an optional default; **Open terminal in Moshi** remains
-available from chat options.
-
-The conversation has a compact session header with a direct terminal button.
-Assistant replies use an open reading surface; consecutive tool calls and results
-collapse into one activity row with a command preview and operation count. Expand
-it to read or copy the full details. The composer keeps text, attachments, project
-context, dictation, send/stop, and progress together. It opens the keyboard only
-when you select the text field. The 14-point monospace text scales with Dynamic
-Type. The compact input bar sits at the bottom; tap the conversation or drag it
-to dismiss the keyboard without losing your draft. Links and tool controls remain
-tappable.
-
-The plus button attaches photos, camera images, files, or a pasted image. Preview
-and remove attachments before sending. Up to four files (8 MB each) upload over
-SSH to the selected computer; the agent receives their local paths. Photos are
-resized and location metadata removed. Failed uploads preserve the image and
-text without sending a partial message.
-
-The microphone opens editable dictation. Chat options or **+ → Project memory
-and skills** add project summaries, findings, or skills to a draft for review.
-Chat options also open project memory, skills, and the graph. Failed or uncertain
-delivery preserves the draft and never retries automatically. Text and attachment
-drafts survive process relaunch in protected local storage. They do not sync to Git.
-Messages target the live Herdr pane on the selected computer and named server,
-after checking that it still contains the chosen conversation. A rejected send
-shows the computer's error reason; a lost connection shows **Reconnect** beside
-the composer without submitting your draft.
-
-New assistant text appears progressively as transcript updates arrive, with
-waiting, working, receiving, and finished indicators. The token button shows
-the latest model response's reported input/output counts; tap for cached input
-and model details when supplied. These are provider counts, not word estimates.
-The hook can buffer complete transcript chunks, so Phren cannot display words
-before the host publishes them. History and reconnect snapshots appear
-immediately; Reduce Motion and VoiceOver also disable the reveal animation.
-
-**Herdr workspaces & terminal** on a computer opens native workspace, tab and pane navigation. Choose a named server, create a workspace in a folder, add tabs/panes, rename or close workspaces/tabs, and use the terminal without leaving Phren. Closing a workspace or tab asks before stopping its processes.
-
-Open Herdr from the computer's terminal toolbar button. Session rows open chat;
-their info button opens the terminal, Moshi, project graph, and session metadata.
-The **globe** in Agents lists running web servers grouped by computer. The globe
-inside a computer filters to that host. Compact rows show app title, process,
-and port; tap to open a full-screen browser in Phren. Back, forward, reload,
-links, page zoom, uploads, and WebSocket live reload use a private SSH tunnel,
-including apps listening only on the computer's localhost. Closing the browser
-closes its tunnel. Backgrounding pauses the connection; returning reconnects
-with the current page and browser storage retained for that preview. The browser
-keeps each preview's cookies/storage separate from other computers.
-
-Discovery reads the helper's `/events` snapshot every 15 seconds while the list
-is visible. Opening rechecks the selected computer and port. Previous lists remain
-visible after connection failures. Existing connections created before build 18
-need their authorization line replaced from **Connection settings**, or run
-`python3 apps/ios/scripts/enable-web-previews.py` on the SSH computer as that user.
-This adds forwarding to IPv4/IPv6 localhost app ports while retaining the forced
-command and SSH restrictions. Apps do not need to bind to the LAN or use Funnel.
-The tunnel passes bytes without rewriting pages. Apps that hardcode a different
-localhost port, external OAuth callbacks, or untrusted HTTPS certificates may
-need their development server configuration adjusted. A phone port collision
-uses an available port; relative URLs and ordinary live reload still work.
-
-The terminal has one compact rounded key bar with a directional pad and explicit Paste.
-The pad includes Enter between Left and Right, Backspace, and Clear Line. Tap Ctrl
-for the Control modifier; hold it for a shortcut palette with Favorites, Codex,
-Claude, Copilot, Herdr, and Keys tabs. Hold a command to save it as a favorite.
-Commands insert text without Enter. The Herdr tab opens workspace/pane navigation
-and web servers for the same computer. Two-finger swipes up open shortcuts and
-down hide the keyboard; turn these off in the palette's gesture settings.
-Only its keyboard button raises the keyboard. Controls and web links activate on
-the first tap with the keyboard hidden or visible. Pinch to resize the text and
-remote grid; zooming out fits more columns for Herdr's sidebar. The chosen text
-size is remembered across terminals and app launches.
-Swipe to scroll; hold to select text and drag to extend it, then choose Copy or
-Paste. A swipe never sends a desktop selection drag to Herdr.
-
-The adapter requires the computer's existing `moshi-hook` (verified with 0.3.19)
-and a default or named Herdr server, but does not require the Moshi iPhone app. Chat receives
-live transcript updates while visible, loads earlier messages on demand, and
-reconnects after foregrounding. Tools expand inline; Markdown headings and code
-cards are native, code can be copied, and messages can be copied or shared.
-**Stop** interrupts a working turn. Approvals and multiple-choice questions appear inline; other prompts can be answered in the native **Herdr terminal**. **Repository changes** opens the selected pane's Git diff.
-
-History and image previews are bounded in memory. Historical images load from the selected conversation. Live transcript records are not token-by-token output.
-See [connection contracts and validation](AGENT_CONNECTIONS.md#native-conversation)
-and the [feature comparison and next work](CHAT_FEATURES.md).
-
-### Automatic Moshi session handoff
-
-After connecting a computer in **Agents**, tap the external-app icon on a live
-card, or **Open [workspace] in Moshi** in its details. Phren uses the hook's workspace ID directly when that workspace
-has one tab, and includes the selected tab ID when there are several. No session
-link form or project mapping is needed. The action opens Moshi directly in one
-tap, including from session details. Long-press the action to copy its link.
-
-A project's **Project session → Open in Moshi**, and **Session → Open in Moshi**
-in graph details, discover sessions on the configured computers. One matching
-session is shown for selection after discovery succeeds. Several matches offer a
-chooser with the actual agent, status, workspace, directory, and computer.
-Discovery and refresh never open another app automatically. Tapping a chosen
-session opens it directly, without another confirmation. If no session matches,
-opening one remembers its directory for this project on this iPhone.
-
-Directory recognition uses the deepest path component matching a unique attached
-project name, including subfolders and worktrees. Explicit directory mappings
-take precedence. Duplicate project names across stores require a choice; Phren
-does not infer a project from a session label or agent conversation ID.
-
-Moshi must already have an open or minimized session for the computer. Its public
-links cannot create a connection or select a host ID. Even with only one computer
-saved in Phren, Moshi may have another computer active. Moshi chooses the matching
-session card, including on another computer. Known workspace collisions appear
-inline in the chooser; they do not require another tap. The link cannot
-guarantee the computer Moshi will choose. Phren cannot read
-the Moshi iPhone app's active cards. Fully automatic computer selection needs a
-supported host-specific handoff from Moshi.
-
-**Add Moshi link** and **Edit Moshi link** remain manual fallbacks for tmux,
-named Herdr servers, or other destinations outside the discovery adapter.
-With a computer configured, an existing link appears as **Open saved Moshi shortcut**.
-
-Manual shortcuts are device-local project bookmarks, including for read-only stores.
-They are keyed by full store identity and project, never synced to Git, and
-do not create an agent or supply live status. Failed app launches retain the
-link; Moshi handles unavailable sessions. Phren remains usable without Moshi.
-See [Moshi's public session links](https://getmoshi.app/docs/notifications#open-active-sessions-with-deep-links)
-for supported app versions and session matching.
-
-`SessionDiscoveryTests` covers project recognition, ambiguous stores, exact tab
-destinations, and host collisions. Native `AutomaticSessionTests` covers project
-and graph handoffs, direct live-row opening, multiple matches, and offline hosts.
-The existing Moshi tests cover manual shortcuts, encoding, persistence, and removal.
-
-### Live Herdr sessions over Tailscale / SSH
-
-The Agents overview polls saved computers independently while visible and active.
-A slow computer does not delay other results. Offline or paused computers keep
-their previous rows under **Last seen**, with chat opening disabled until that
-computer reconnects. Its connection row opens the existing verification/settings
-flow. Closed tabs disappear after the next successful read. Refresh and
-pull-to-refresh retry all computers; reconnect retains each computer's last
-snapshot in memory. Removing a computer or changing its Herdr server discards
-the old destination. The full computer, Herdr server, workspace, and tab identity
-is preserved when opening chat and details, even when IDs repeat on two machines.
-
-Inside a computer, switch between **Workspaces** and **Activity**. Activity groups
-tabs by their reported state, putting errors and waiting sessions first. Search
-matches session titles, workspace names, agents, folders, and linked projects.
-Cards use the hook's conversation title when available, with the tab label as a
-fallback, plus status icons and a direct Moshi action.
-
-Tap the card's info button to open **Session details**: its full title, live state, computer,
-workspace, tab, agent and pane counts when reported, and a copyable folder path.
-Project memory links open the matched project's findings, tasks, and graph;
-**Change project link** corrects the association. Details track the live session
-identity, and a closed session loses its actions on the next successful refresh.
-Stale sessions stay readable with opening disabled until reconnection.
-
-**Open [workspace] in Moshi** continues the session there. In Moshi, tap the agent
-icon to switch to [Chat View](https://getmoshi.app/docs/chat-view) when available.
-Phren's handoff selects the live session; it does not request a particular Moshi
-view. Native Phren chat reads the transcript through SSH separately.
-
-Open **Agents → Add computer** (also available from Projects and graph options).
-Enter the computer's Tailscale hostname/IP, SSH port, and user. Create a device
-key and add the copied authorization line to that user's `~/.ssh/authorized_keys`
-on the computer. Enable SSH/Remote Login and run `moshi-hook` with its gateway
-on the default loopback port 24543. Connect Tailscale on the phone when needed.
-
-Save and open the computer. Compare the displayed host fingerprint with
-`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on that computer (or its
-matching ECDSA host key), then trust it. Phren rejects later key changes.
-The private Ed25519 key lives in this device's Keychain, separately from GitHub
-credentials. **Connection settings → Forget computer** removes it and the
-local directory mappings; remove the public authorization line on the host to
-revoke access there too.
-
-### Slash commands
-
-Type `/` in the chat composer for common command suggestions, or choose **Chat
-options → Slash commands** to open the running agent's complete menu in Phren's
-Herdr terminal. The full menu comes from the agent on that computer, including
-its installed skills, plugins, aliases, and version-specific commands. It inserts
-`/` once, without Enter, when the chosen agent is idle; it leaves working agents
-and approval prompts untouched. The terminal keyboard remains closed until its
-keyboard button is tapped.
-
-Send any slash command and arguments unchanged from chat, including commands not
-in the suggestions. Phren opens the same pane's terminal for interactive menus
-and command output. Returning resolves its current conversation again, so `/new`,
-`/clear`, or `/resume` cannot keep chat bound to the old session. Commands cannot
-be combined with file attachments. Unconfirmed sends keep their draft and are
-never retried automatically.
-
-### GitHub Copilot CLI
-
-On the computer running [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli),
-install Herdr's session integration and Phren's bridge as the SSH user:
+Phren connects directly to **Phren Hook**, the independent helper shipped with
+`@phren/cli`. Install it on each computer running your agents:
 
 ```sh
-herdr integration install copilot
-python3 apps/ios/scripts/enable-chat-progress.py
+npx --yes @phren/cli@0.2.11 bridge install
+npx --yes @phren/cli@0.2.11 bridge doctor
 ```
 
-Start or restart Copilot inside Herdr after installing its integration. Sign in to
-Copilot on that computer if needed. Phren uses the session ID reported by Herdr,
-not the newest log or a second resumed Copilot process. The existing Moshi helper
-is still used for terminal transport, uploads, and workspace browsing; Moshi on
-the phone remains optional. Helper 0.3.19 omits Copilot metadata and transcripts,
-so Phren supplements discovery directly from Herdr through the SSH bridge.
+Requirements: macOS or Linux, Node 20+, Herdr, SSH/Remote Login, and `lsof`.
+Use Tailscale to reach the computers away from home. No public gateway, Funnel,
+Moshi app, or Moshi helper is required. Existing third-party applications remain
+separate and are not uninstalled.
 
-Native Copilot chat reads visible user/assistant messages, tool activity, and
-recorded lifecycle/usage events from `~/.copilot/session-state/<id>/events.jsonl`
-(or `COPILOT_HOME` set for SSH). It excludes reasoning, transformed prompts,
-binary payloads, and subagent content. New records are read every 250 ms while
-chat is open. Copilot's on-disk log may publish complete messages rather than
-individual token deltas; the app reveals new messages progressively, but cannot
-show content before Copilot records it. Usage appears only when present in the
-log. Copilot approvals and questions are answered in the native Herdr terminal.
-Historical Copilot binary attachments are not rendered; new uploads still use
-the existing attachment flow and deliver their paths to the agent.
+In Phren, open **Agents → Computers**, add the SSH destination, copy the device's
+public authorization line, and add it to that user's `~/.ssh/authorized_keys`.
+Verify the computer's SSH fingerprint. A key already installed by Phren is
+upgraded by `bridge install`, with a backup. Computers, pinned keys, project
+mappings, and unsent text/image drafts remain in place during app updates.
 
-The bridge checks the exact server, workspace, tab, pane, provider, and session
-before input. Herdr independently rejects a replaced foreground process. Only
-explicit send and stop operations can write agent input; there is no arbitrary
-shell execution, session startup, or automatic retry. Hosts without the bridge
-keep their existing agent/terminal access. Discovery has a separate three-second
-deadline and does not turn a missing Copilot bridge into a lost connection.
-
-### Live token counts
-
-Run once from a Phren checkout, as the SSH user on each computer:
+The installer creates a LaunchAgent on macOS or a systemd user service on Linux.
+For Linux operation after logout, enable lingering for the user with your system
+administrator. The bundled helper is copied out of the npm cache into a versioned
+folder under `~/.local/share/phren/bridge`; it does not need `npx` at runtime.
 
 ```sh
-python3 apps/ios/scripts/enable-chat-progress.py
+npx --yes @phren/cli@0.2.11 bridge status
+npx --yes @phren/cli@0.2.11 bridge update
+npx --yes @phren/cli@0.2.11 bridge rollback
+npx --yes @phren/cli@0.2.11 bridge uninstall
 ```
 
-This installs `~/.local/share/phren/chat-progress.py` and `copilot-chat.py`, and upgrades existing
-Phren-labelled device keys, backing up `authorized_keys`. It retains the loopback
-forwarding restrictions and replaces the deny-all command with a fixed reader
-that accepts `phren-chat-progress <codex|claude> <session UUID>` for counters,
-and a bounded `phren-copilot-chat` request for the Copilot operations above. It
-rejects arbitrary shell commands. The progress command reads only the requested
-conversation's counters and lifecycle records.
-Python 3 and standard Codex/Claude transcript directories (or `CODEX_HOME` /
-`CLAUDE_CONFIG_DIR` available to SSH) are required. No daemon or agent restart.
+Uninstall stops the background service and removes Phren's agent callbacks.
+Local history, images, settings, and backups are preserved. Remove the iPhone's
+`phren-iphone` public-key line to revoke its SSH access.
 
-Reopen chat after setup. New device authorization lines already name this reader;
-install it before expecting counters. If unavailable, chat and helper status
-continue working, with a small **Tokens unavailable** setup link. The installed
-Moshi helper filters Codex usage/lifecycle rows from its transcript socket, so
-these counts need the supplemental reader. Token totals update when the provider
-records usage, not for each word appearing on screen.
+### Agent chat, terminal, and project context
 
-The screen fetches `GET /v1/workspaces` through an authenticated SSH channel
-to `127.0.0.1:24543`, every ten seconds while visible and active. Requests have
-a 20-second total deadline and a 1 MB response limit. Leaving the screen or
-backgrounding cancels the read and closes the socket. Last received status is
-held in memory and explicitly marked stale after a failure or pause.
+Codex, Claude Code, and GitHub Copilot sessions appear across connected machines.
+Select an agent to chat, or open its exact Herdr workspace and pane in the native
+terminal. **Project session** offers chat and terminal, with the project's skills,
+findings, tasks, and graph available alongside the conversation.
 
-This adapter was verified with `moshi-hook 0.3.19` and currently supports its
-**default and named Herdr servers**. Entries are tabs, possibly aggregating multiple agent
-panes. Unknown states stay unknown. Other gateway kinds show an unsupported
-message. tmux discovery and dedicated agent-launch controls are not implemented. Native chat discovers individual panes separately.
+Chat supports saved text/image drafts, image uploads, history, progressive text,
+real usage counters, working/waiting state, stop, and repository diffs. Phren
+streams newly written transcript rows; it does not invent token counts or claim
+per-token output when an agent only writes completed messages. Slash suggestions
+are vertical; the full command menu opens the running agent's own terminal menu,
+including installed skills and custom commands.
 
-**Link to project** associates an observed directory with an explicit full
-store ID and project on this phone. Subdirectories match at path boundaries,
-with the most specific mapping winning. When no mapping exists, Phren tries
-directory recognition. A recognized row opens the project's graph; every live
-tab with valid destination IDs can open directly in Moshi without a project link.
-Hostnames, fingerprints, and mappings stay in device preferences, never Git;
-live status is not persisted. There is no new Phren daemon or public gateway.
+The installed lifecycle callbacks bind agent session IDs to the exact Herdr pane
+and foreground process. On Codex, review new Phren entries in `/hooks`; Codex
+requires trust for new hook definitions. Resume existing agents if their version
+does not reload hook configuration. Open transcript descriptors also identify
+existing conversations without restarting them. An ambiguous identity disables
+chat instead of selecting another agent.
 
-`PhrenLive` pins the SSH, NIO, and Crypto dependencies separately from
-`PhrenKit`, so widgets do not link them. Run `swift test` inside both packages.
-The SSH suite uses an isolated loopback server and ephemeral test keys; add
-`PHREN_TEST_MOSHI_HOOK=1` locally to also check the installed hook's real payload.
-Native simulator tests use ad hoc signing to exercise Keychain access; they do
-not require a developer certificate or connect to real hosts.
-`SessionDetailsTests` covers activity ordering, search, session metadata, project
-and graph navigation, the outgoing Moshi URL, and removal during an open detail view.
+Codex and Claude PermissionRequest callbacks can show a native approval while
+Phren is watching that exact conversation. Only an explicit answer resolves the
+pending request. If the phone is not watching, the normal terminal prompt appears
+immediately; unanswered phone requests return to the terminal after 55 seconds.
+Question dialogs and unsupported provider interactions use Phren's native
+terminal. No agent is launched automatically.
+
+The terminal keyboard opens only from its keyboard button. Taps keep Herdr's
+switch control and links clickable; swipe to scroll, pinch to adjust text size,
+and hold to select. The compact dock includes arrows, Enter, Backspace, clear
+line, clipboard, and agent shortcuts. Holding Ctrl opens the shortcut panels.
+
+**Web servers** discovers the user's listening HTTP development apps. Phren opens
+previews through an SSH tunnel, so loopback-only apps work from the iPhone.
+A bounded activity journal stays on each computer and records status transitions
+with project and pane provenance. Generated catch-up summaries are a later feature.
+
+See [Phren Hook setup](../../docs/phren-hook.md) and
+[the connection protocol](AGENT_CONNECTIONS.md) for details and validation.
 
 ## Building
 
@@ -956,7 +742,6 @@ exactly which transcription needs updating.
   yet, only `materializeTeamFindings` in `finding/journal.ts`)
 - `stores.yaml` auto-discovery as an add-store suggestion source
 - Hook configuration from the phone
-- Monitoring and controlling agents running on a computer
 
 ### Coordinated session loading and command suggestions
 

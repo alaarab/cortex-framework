@@ -12,14 +12,14 @@ struct LiveSessionsView: View {
     @State private var refreshID = UUID()
     @State private var overview = SessionOverviewMonitor()
     @State private var selected: OverviewSelection?
-    @State private var chatSession: DiscoveredMoshiSession?
+    @State private var chatSession: LiveAgentSession?
     private var preferences: LiveSessionPreferences? { try? LiveSessionPreferences.read(data) }
     private var hosts: [LiveHost] { preferences?.hosts ?? [] }
 
     private struct OverviewSelection: Identifiable {
-        let session: DiscoveredMoshiSession
+        let session: LiveAgentSession
         let monitor: LiveHostMonitor
-        var id: DiscoveredMoshiSession.ID { session.id }
+        var id: LiveAgentSession.ID { session.id }
     }
     private struct PollID: Equatable { let hosts: [LiveHost]; let active: Bool; let refresh: UUID }
 
@@ -53,7 +53,7 @@ struct LiveSessionsView: View {
                 } header: {
                     Text("Computers")
                 } footer: {
-                    Text("Keep Tailscale connected on both devices when you're away. Moshi is optional.")
+                    Text("Keep Tailscale connected on both devices when you're away. Phren Hook connects your existing agents.")
                 }
                 Section("Agent setup") {
                     NavigationLink { SkillsView() } label: {
@@ -155,17 +155,17 @@ struct LiveSessionsView: View {
 
 @Observable @MainActor
 final class LiveHostMonitor {
-    var snapshot: MoshiWorkspaces?
+    var snapshot: LiveWorkspaces?
     var lastUpdated: Date?
     var message: String?
     var fingerprint: String?
     var refreshing = false
     var polling = false
     private var generation = UUID()
-    @ObservationIgnored private let fetchSnapshot: (LiveHost, Date?) async throws -> MoshiWorkspaces
+    @ObservationIgnored private let fetchSnapshot: (LiveHost, Date?) async throws -> LiveWorkspaces
     @ObservationIgnored private let pollInterval: Duration
 
-    init(pollInterval: Duration = .seconds(10), fetch: @escaping (LiveHost, Date?) async throws -> MoshiWorkspaces = { try await LiveHostMonitor.fetch($0, previousUpdate: $1) }) {
+    init(pollInterval: Duration = .seconds(10), fetch: @escaping (LiveHost, Date?) async throws -> LiveWorkspaces = { try await LiveHostMonitor.fetch($0, previousUpdate: $1) }) {
         self.pollInterval = pollInterval; self.fetchSnapshot = fetch
     }
 
@@ -189,7 +189,7 @@ final class LiveHostMonitor {
                 guard !Task.isCancelled, generation == run else { return }
                 message = (error as? LiveConnectionError)?.localizedDescription
                     ?? (error as? PhrenKitError)?.localizedDescription
-                    ?? "Couldn't reach the computer. Check the address, Tailscale, SSH, and moshi-hook."
+                    ?? "Couldn't reach the computer. Check the address, Tailscale, SSH, and Phren Hook."
                 if case LiveConnectionError.untrustedHost(let key) = error { fingerprint = key }
             }
             refreshing = false
@@ -199,11 +199,11 @@ final class LiveHostMonitor {
         }
     }
 
-    static func fetch(_ host: LiveHost, previousUpdate: Date? = nil) async throws -> MoshiWorkspaces {
+    static func fetch(_ host: LiveHost, previousUpdate: Date? = nil) async throws -> LiveWorkspaces {
         #if DEBUG && targetEnvironment(simulator)
         if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--all-sessions-fixture") {
             if ProcessInfo.processInfo.arguments.contains("--all-sessions-empty") {
-                return try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
+                return try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
             }
             let remote = host.id.uuidString.hasSuffix("000002")
             if remote && previousUpdate == nil && ProcessInfo.processInfo.arguments.contains("--all-sessions-delayed") {
@@ -216,7 +216,7 @@ final class LiveHostMonitor {
             let finished = previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--all-sessions-change")
             let status = remote ? "waiting" : finished ? "done" : "working"
             let other = remote ? "Inspect logs" : "Check project status"
-            return try MoshiWorkspaces.read(Data("""
+            return try LiveWorkspaces.read(Data("""
             {"kind":"herdr","groups":[{"id":"w1","label":"Shared project","children":[
             {"id":"w1:t1","label":"1","title":"\(title)","agent":"codex","agentStatus":"\(status)","cwd":"/work/phone"},
             {"id":"w1:t2","label":"2","title":"\(other)","agent":"codex","agentStatus":"idle","cwd":"/work/phone"}]}]}
@@ -226,9 +226,9 @@ final class LiveHostMonitor {
             if ProcessInfo.processInfo.arguments.contains("--session-discovery-offline") { throw LiveConnectionError.disconnected }
             if ProcessInfo.processInfo.arguments.contains("--session-details-fixture") {
                 if previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--session-details-removed") {
-                    return try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
+                    return try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
                 }
-                return try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w7","label":"Phone work","children":[{"id":"w7:t9","label":"1","title":"Polish the phone app","agent":"codex","agentStatus":"working","cwd":"/work/phone/src","agentPaneCount":2,"paneCount":3}]},{"id":"w8","label":"Other work","children":[{"id":"w8:t1","label":"1","title":"Choose the deployment target","agent":"claude","agentStatus":"waiting","cwd":"/work/other"}]},{"id":"w9","label":"Shell","children":[{"id":"w9:t1","label":"1"}]}]}"#.utf8))
+                return try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w7","label":"Phone work","children":[{"id":"w7:t9","label":"1","title":"Polish the phone app","agent":"codex","agentStatus":"working","cwd":"/work/phone/src","agentPaneCount":2,"paneCount":3}]},{"id":"w8","label":"Other work","children":[{"id":"w8:t1","label":"1","title":"Choose the deployment target","agent":"claude","agentStatus":"waiting","cwd":"/work/other"}]},{"id":"w9","label":"Shell","children":[{"id":"w9:t1","label":"1"}]}]}"#.utf8))
             }
             if ProcessInfo.processInfo.arguments.contains("--observed-live-session-ids") {
                 // Match the reported shape: every workspace's first tab is
@@ -239,20 +239,20 @@ final class LiveHostMonitor {
                     #"{"id":"w2","label":"Third work","children":[{"id":"w2:t1","label":"1","cwd":"/work/third"}]}"#,
                 ]
                 if previousUpdate != nil { groups.reverse() }
-                return try MoshiWorkspaces.read(Data((#"{"kind":"herdr","groups":["# + groups.joined(separator: ",") + "]}").utf8))
+                return try LiveWorkspaces.read(Data((#"{"kind":"herdr","groups":["# + groups.joined(separator: ",") + "]}").utf8))
             }
             let extra = ProcessInfo.processInfo.arguments.contains("--multiple-project-sessions")
                 ? #",{"id":"w7:t10","label":"Review phone changes","agent":"claude","agentStatus":"waiting","cwd":"/work/phone"}"# : ""
-            return try MoshiWorkspaces.read(Data((#"{"kind":"herdr","groups":[{"id":"w7","label":"Phone work","children":[{"id":"w7:t9","label":"Build phone app","agent":"codex","agentStatus":"working","cwd":"/work/phone/src","sessionId":"not-a-server"}"# + extra + #"]},{"id":"w8","label":"Other work","children":[{"id":"w8:t1","label":"Unrelated session","cwd":"/work/other"}]}]}"#).utf8))
+            return try LiveWorkspaces.read(Data((#"{"kind":"herdr","groups":[{"id":"w7","label":"Phone work","children":[{"id":"w7:t9","label":"Build phone app","agent":"codex","agentStatus":"working","cwd":"/work/phone/src","sessionId":"not-a-server"}"# + extra + #"]},{"id":"w8","label":"Other work","children":[{"id":"w8:t1","label":"Unrelated session","cwd":"/work/other"}]}]}"#).utf8))
         }
         if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--live-sessions-fixture") {
             if previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--live-sessions-offline") {
                 throw LiveConnectionError.disconnected
             }
-            return try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone project","children":[{"id":"w1:t1","label":"Build graph","agent":"codex","agentStatus":"working","cwd":"/work/demo","agentPaneCount":1}]}]}"#.utf8))
+            return try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone project","children":[{"id":"w1:t1","label":"Build graph","agent":"codex","agentStatus":"working","cwd":"/work/demo","agentPaneCount":1}]}]}"#.utf8))
         }
         #endif
-        return try await MoshiConnection.fetch(host: host, privateKey: DeviceSSHKey.load(host.id))
+        return try await PhrenConnection.fetch(host: host, privateKey: DeviceSSHKey.load(host.id))
     }
 }
 
@@ -266,7 +266,7 @@ private struct LiveHostView: View {
     @State private var localError: String?
     @State private var query = ""
     @State private var mode: SessionViewMode = .workspaces
-    @State private var selected: DiscoveredMoshiSession?
+    @State private var selected: LiveAgentSession?
     let hostID: UUID
 
     private enum SessionViewMode: String, CaseIterable {
@@ -274,11 +274,11 @@ private struct LiveHostView: View {
     }
     private var preferences: LiveSessionPreferences? { try? LiveSessionPreferences.read(data) }
     private var host: LiveHost? { preferences?.hosts.first { $0.id == hostID } }
-    private var sessions: [DiscoveredMoshiSession] {
+    private var sessions: [LiveAgentSession] {
         guard let host else { return [] }
         return monitor.snapshot?.sessions(on: host) ?? []
     }
-    private var visible: [DiscoveredMoshiSession] {
+    private var visible: [LiveAgentSession] {
         sessions.filter { session in
             let project = preferences?.projectMatch(hostID: hostID, cwd: session.tab.cwd, projects: model.sessionProjects)
             return session.matches(query, projectName: project?.project.name)
@@ -311,7 +311,7 @@ private struct LiveHostView: View {
                                 }
                             }
                         case .activity:
-                            ForEach(MoshiWorkspaces.Tab.Activity.allCases, id: \.self) { activity in
+                            ForEach(LiveWorkspaces.Tab.Activity.allCases, id: \.self) { activity in
                                 let entries = visible.filter { $0.tab.activity == activity }
                                 if !entries.isEmpty {
                                     sectionHeading(activity.rawValue, count: entries.count)
@@ -411,7 +411,7 @@ private struct LiveHostView: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    private func sessionCards(_ entries: [DiscoveredMoshiSession]) -> some View {
+    private func sessionCards(_ entries: [LiveAgentSession]) -> some View {
         ForEach(entries) { session in
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 LiveSessionCard(session: session, fresh: monitor.isFresh(at: context.date)) { selected = session }
@@ -441,7 +441,7 @@ extension LiveHostMonitor {
     }
 }
 
-private extension MoshiWorkspaces.Tab.Activity {
+private extension LiveWorkspaces.Tab.Activity {
     var color: Color {
         switch self {
         case .working: PhrenTheme.cyan
@@ -464,7 +464,7 @@ private extension MoshiWorkspaces.Tab.Activity {
 }
 
 private struct SessionStatusIcon: View {
-    let activity: MoshiWorkspaces.Tab.Activity
+    let activity: LiveWorkspaces.Tab.Activity
     let fresh: Bool
     private var color: Color { fresh ? activity.color : PhrenTheme.textMuted }
     var body: some View {
@@ -481,7 +481,7 @@ private struct SessionStatusIcon: View {
 private struct LiveSessionCard: View {
     @Environment(AppModel.self) private var model
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
-    let session: DiscoveredMoshiSession
+    let session: LiveAgentSession
     let fresh: Bool
     var showHost = false
     var onChat: (() -> Void)? = nil
@@ -535,12 +535,12 @@ private struct LiveSessionDetailView: View {
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
     @State private var assigning = false
     @State private var copiedFolder = false
-    let sessionID: DiscoveredMoshiSession.ID
+    let sessionID: LiveAgentSession.ID
     let monitor: LiveHostMonitor
 
     private var preferences: LiveSessionPreferences? { try? LiveSessionPreferences.read(data) }
     private var host: LiveHost? { preferences?.hosts.first { $0.id == sessionID.hostID } }
-    private var session: DiscoveredMoshiSession? {
+    private var session: LiveAgentSession? {
         guard let host else { return nil }
         return monitor.snapshot?.sessions(on: host).first { $0.id == sessionID }
     }
@@ -573,21 +573,15 @@ private struct LiveSessionDetailView: View {
                             NavigationLink { HerdrTerminalView(host: session.host, session: session) } label: {
                                 Label("Herdr terminal", systemImage: "terminal")
                             }.disabled(!fresh)
-                            AgentConversationLink(session: session, honorsPreference: false) {
+                            AgentConversationLink(session: session) {
                                 Label("Chat with agent", systemImage: "bubble.left.and.bubble.right")
                                     .frame(minHeight: 44)
                             }
                             .accessibilityIdentifier("session-detail-chat")
                             .disabled(!fresh)
-                            if let destination = try? session.link().url() {
-                                MoshiSessionOpenLink(destination: destination, workspaceName: session.workspaceName)
-                                    .id(destination)
-                                    .accessibilityIdentifier("session-detail-open")
-                                    .disabled(!fresh)
-                            }
                         } footer: {
-                            Text(fresh ? "In Moshi, tap the agent icon to switch between the terminal and Chat View when available."
-                                 : "Reconnect this computer before opening its session in Moshi.")
+                            Text(fresh ? "Chat and terminal stay connected to this computer's session."
+                                 : "Reconnect this computer to resume its session.")
                         }
                         Section("Project memory") {
                             if let project = match?.project, model.sessionProjects.contains(project) {

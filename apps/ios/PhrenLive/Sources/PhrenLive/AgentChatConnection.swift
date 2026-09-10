@@ -5,15 +5,14 @@ import NIOHTTP1
 import NIOWebSocket
 import PhrenKit
 
-extension MoshiConnection {
+extension PhrenConnection {
     public static func chatUpdates(host: LiveHost, privateKey: Data, target: AgentChatTarget) -> AsyncThrowingStream<AgentChatTranscript, Error> {
         AsyncThrowingStream(bufferingPolicy: .bufferingOldest(8)) { continuation in
             let worker = Task {
                 do {
                     guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
-                    let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "watch") : .transcript(target, streaming: true)
+                    let request = GatewayRequest.transcript(target, streaming: true)
                     _ = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request) { data in
-                        if target.source == "copilot" { try checkCopilotResponse(data) }
                         let frame = try AgentChatTranscript.read(data, source: target.source)
                         if case .dropped = continuation.yield(frame) { throw LiveConnectionError.oversized }
                     }
@@ -26,9 +25,8 @@ extension MoshiConnection {
 
     public static func chatHistory(host: LiveHost, privateKey: Data, target: AgentChatTarget, beforeLine: Int) async throws -> AgentChatTranscript {
         guard target.hostID == host.id && target.muxID == host.muxID, beforeLine > 0 else { throw PhrenKitError.validation("This history has no earlier destination.") }
-        let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "history", before: beforeLine) : .transcript(target, beforeLine: beforeLine)
+        let request = GatewayRequest.transcript(target, beforeLine: beforeLine)
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
-        if target.source == "copilot" { try checkCopilotResponse(data) }
         let result = try AgentChatTranscript.read(data, source: target.source)
         guard result.kind == .older, result.messages.allSatisfy({ $0.line < beforeLine }) else {
             throw PhrenKitError.validation("The computer returned a different history range.")
@@ -39,7 +37,7 @@ extension MoshiConnection {
     public static func uploadChatAttachment(host: LiveHost, privateKey: Data, target: AgentChatTarget, attachment: AgentAttachment) async throws -> String {
         guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
         _ = try await chatPanes(host: host, privateKey: privateKey, workspaceID: target.workspaceID, tabID: target.tabID).validate(target, sending: true)
-        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .upload(attachment))
+        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .upload(attachment, target: target))
         return try AgentAttachment.uploadedPath(from: data)
     }
 
@@ -48,9 +46,8 @@ extension MoshiConnection {
         guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
         let pane = try await chatPanes(host: host, privateKey: privateKey, workspaceID: target.workspaceID, tabID: target.tabID).validate(target, sending: true)
         guard pane.agentStatus == "working" else { throw PhrenKitError.validation("This agent is no longer working.") }
-        let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "stop") : .stop(target)
+        let request = try GatewayRequest.stop(target)
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
-        if target.source == "copilot" { try checkCopilotResponse(data) }
         guard (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["ok"] as? Bool == true else {
             throw PhrenKitError.validation("The stop request was not confirmed. Check the terminal.")
         }
@@ -60,21 +57,16 @@ extension MoshiConnection {
             throw PhrenKitError.validation("This workspace has no usable chat destination.")
         }
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .panes(workspaceID, tabID))
-        // Validate the helper's location before consulting the Copilot bridge.
-        _ = try AgentChatPanes.read(data, workspaceID: workspaceID, tabID: tabID)
-        // An older host without the bridge must not hide its other agents.
-        let resolved = (try? await copilotPaneIdentities(data, host: host, key: privateKey, workspace: workspaceID, tab: tabID)) ?? data
-        return try AgentChatPanes.read(resolved, workspaceID: workspaceID, tabID: tabID)
+        return try AgentChatPanes.read(data, workspaceID: workspaceID, tabID: tabID)
     }
 
     /// A bounded recent-history snapshot from the hook's WebSocket, then close.
     /// One-shot callers can use this without subscribing to live updates.
     public static func chatTranscript(host: LiveHost, privateKey: Data, target: AgentChatTarget) async throws -> AgentChatTranscript {
         guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
-        var request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "watch") : .transcript(target)
+        var request = GatewayRequest.transcript(target)
         request.streaming = false
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
-        if target.source == "copilot" { try checkCopilotResponse(data) }
         return try AgentChatTranscript.read(data, source: target.source)
     }
 
@@ -87,10 +79,9 @@ extension MoshiConnection {
         let panes = try await chatPanes(host: host, privateKey: privateKey, workspaceID: target.workspaceID, tabID: target.tabID)
         _ = try panes.validate(target, sending: true)
         try Task.checkCancellation()
-        let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "send", text: text) : GatewayRequest.prompt(target, text: text)
+        let request = try GatewayRequest.prompt(target, text: text)
         // Exactly one attempt. An interrupted reply must not replay terminal input.
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
-        if target.source == "copilot" { try checkCopilotResponse(data) }
         guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any], result["ok"] as? Bool == true else {
             throw PhrenKitError.validation("Delivery was not confirmed. Check the conversation before sending again.")
         }
@@ -106,29 +97,33 @@ struct GatewayRequest: Sendable {
     var beforeLine: Int?
     var initialMessages: [Data] = []
     var terminalSocket: HerdrTerminalSocket?
-    var progressCommand: String?
+    var terminalServer: String?
+    var terminalColumns = 80
+    var terminalRows = 24
     var timeoutSeconds: Int?
     static let workspaces = Self(path: "/v1/workspaces")
     static func panes(_ workspace: String, _ tab: String) -> Self {
         Self(path: path("/v1/workspaces/panes", ["groupId": workspace, "childId": tab]))
     }
-    static func transcript(_ target: AgentChatTarget, streaming: Bool = false, beforeLine: Int? = nil) -> Self {
-        Self(path: path("/v1/transcripts", ["source": target.source, "session": target.sessionID, "limit": beforeLine == nil ? "200" : "1"]),
-             webSocket: true, streaming: streaming, beforeLine: beforeLine)
+    static func targetQuery(_ target: AgentChatTarget) -> [String: String] {
+        ["server": String(target.muxID.dropFirst("herdr:".count)), "workspace": target.workspaceID,
+         "tab": target.tabID, "pane": target.paneID, "source": target.source, "session": target.sessionID]
     }
-    static func upload(_ attachment: AgentAttachment) throws -> Self {
-        Self(path: "/v1/upload", body: try JSONSerialization.data(withJSONObject: ["name": attachment.uploadName, "data": attachment.data.base64EncodedString()]))
+    static func transcript(_ target: AgentChatTarget, streaming: Bool = false, beforeLine: Int? = nil) -> Self {
+        Self(path: path("/v1/transcripts", targetQuery(target)), webSocket: true, streaming: streaming, beforeLine: beforeLine)
+    }
+    static func targetBody(_ target: AgentChatTarget, fields: [String: Any] = [:]) throws -> Data {
+        var body = fields; body["target"] = targetQuery(target)
+        return try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+    }
+    static func upload(_ attachment: AgentAttachment, target: AgentChatTarget) throws -> Self {
+        Self(path: "/v1/upload", body: try targetBody(target, fields: ["name": attachment.uploadName, "data": attachment.data.base64EncodedString()]))
     }
     static func stop(_ target: AgentChatTarget) throws -> Self {
-        Self(path: "/v1/keys", body: try JSONSerialization.data(withJSONObject: ["source": target.source, "sessionId": target.sessionID, "keys": ["Escape"]]))
+        Self(path: "/v1/keys", body: try targetBody(target, fields: ["keys": ["Escape"]]))
     }
     static func prompt(_ target: AgentChatTarget, text: String) throws -> Self {
-        // sessionId makes the helper use its recorded terminal location, even
-        // when pane is also supplied. Use the live pane we just validated and
-        // explicitly select its Herdr server. Never fall back to a focused tab.
-        Self(path: path("/v1/prompt", ["mux": target.muxID]), body: try JSONSerialization.data(withJSONObject: [
-            "source": target.source, "pane": target.paneID, "text": text,
-        ], options: [.sortedKeys]))
+        Self(path: "/v1/prompt", body: try targetBody(target, fields: ["text": text]))
     }
     func scoped(to host: LiveHost) -> Self {
         guard path.hasPrefix("/v1/workspaces") else { return self }
@@ -170,7 +165,7 @@ private final class TranscriptHandshake: ChannelInboundHandler, RemovableChannel
     init(exchange: Exchange, path: String) { self.exchange = exchange; self.path = path }
     func channelActive(context: ChannelHandlerContext) {
         let head = HTTPRequestHead(version: .http1_1, method: .GET, uri: path,
-                                   headers: HTTPHeaders([("Host", "127.0.0.1:24543")]))
+                                   headers: HTTPHeaders([("Host", "phren.local")]))
         context.write(wrapOutboundOut(.head(head)), promise: nil)
         context.writeAndFlush(wrapOutboundOut(.end(nil))).whenFailure { [exchange] in exchange.finish(.failure($0)) }
     }

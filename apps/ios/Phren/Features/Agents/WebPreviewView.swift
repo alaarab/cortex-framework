@@ -124,7 +124,7 @@ private final class WebPreviewModel: NSObject, WKNavigationDelegate, WKUIDelegat
 
     private func open(host: LiveHost, server: WebServer) async throws -> URL {
         let key = try DeviceSSHKey.load(host.id)
-        let current = try await MoshiConnection.webServers(host: host, privateKey: key)
+        let current = try await PhrenConnection.webServers(host: host, privateKey: key)
         guard let live = current.first(where: { $0.id == server.id }) else {
             throw PhrenKitError.validation("This web server is no longer running. Refresh the list to find its new port.")
         }

@@ -38,6 +38,7 @@ final class AgentChatModel {
     private var submittedAfterLine = -1
     var liveActivity: String?
     var modelName: String?
+    var questionsSupported = true
     var progressUnavailable = false
     var messages: [AgentChatMessage] { history.messages }
     var hasMore: Bool { history.hasMore }
@@ -69,7 +70,7 @@ final class AgentChatModel {
     private var streamTask: Task<Void, Never>?
     private var streamTarget: AgentChatTarget?
 
-    func choose(_ pane: AgentChatPanes.Pane, session: DiscoveredMoshiSession) {
+    func choose(_ pane: AgentChatPanes.Pane, session: LiveAgentSession) {
         do {
             let chosen = try pane.target(hostID: session.host.id, workspaceID: session.workspaceID, tabID: session.tab.id, muxID: session.host.muxID)
             target = chosen
@@ -107,7 +108,7 @@ final class AgentChatModel {
         attachments.append(.init(attachment: attachment)); deliveryError = nil
     }
 
-    func run(_ session: DiscoveredMoshiSession) async {
+    func run(_ session: LiveAgentSession) async {
         let run = UUID(); generation = run; loading = true
         defer {
             if generation == run {
@@ -146,7 +147,7 @@ final class AgentChatModel {
         }
     }
 
-    private func beginStream(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
+    private func beginStream(_ session: LiveAgentSession, target: AgentChatTarget, run: UUID) {
         streamTask?.cancel(); streamTarget = target
         beginStatus(session, target: target, run: run)
         beginProgress(session, target: target, run: run)
@@ -161,7 +162,7 @@ final class AgentChatModel {
                     return
                 }
                 #endif
-                let updates = MoshiConnection.chatUpdates(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target)
+                let updates = PhrenConnection.chatUpdates(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target)
                 for try await frame in updates {
                     try Task.checkCancellation()
                     guard self.target == target, generation == run else { return }
@@ -196,33 +197,14 @@ final class AgentChatModel {
         }) { awaitingReply = false }
     }
 
-    private func beginProgress(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
-        progressTask?.cancel(); progressConnected = false; progressUnavailable = false
-        guard target.source != "copilot" else { return }
-        progressTask = Task {
-            #if DEBUG && targetEnvironment(simulator)
-            if AgentChatFixture.enabled { return }
-            #endif
-            do {
-                for try await frame in MoshiConnection.chatProgress(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target) {
-                    try Task.checkCancellation()
-                    guard self.target == target, generation == run else { return }
-                    progressConnected = true
-                    acceptProgress(frame)
-                }
-            } catch {
-                // Counters are supplemental. Unsupported hosts keep live chat,
-                // helper status, and drafts; no estimated usage is substituted.
-                if !Task.isCancelled, self.target == target, generation == run {
-                    progressConnected = false; progressUnavailable = true
-                }
-            }
-        }
+    private func beginProgress(_ session: LiveAgentSession, target: AgentChatTarget, run: UUID) {
+        // Phren Hook includes real lifecycle and usage events in the chat stream.
+        progressTask?.cancel(); progressTask = nil
+        progressConnected = false; progressUnavailable = false
     }
 
-    private func beginStatus(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
+    private func beginStatus(_ session: LiveAgentSession, target: AgentChatTarget, run: UUID) {
         statusTask?.cancel(); interactionConnected = false; approval = nil
-        guard target.source != "copilot" else { return }
         let statusRun = UUID(); statusGeneration = statusRun
         statusTask = Task {
             while !Task.isCancelled {
@@ -234,11 +216,11 @@ final class AgentChatModel {
                         return
                     }
                     #endif
-                    for try await status in MoshiConnection.interactionUpdates(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target) {
+                    for try await status in PhrenConnection.interactionUpdates(host: session.host, privateKey: try DeviceSSHKey.load(session.host.id), target: target) {
                         try Task.checkCancellation()
                         guard self.target == target, generation == run, statusGeneration == statusRun else { return }
                         if awaitingReply, liveActivity != "working", status.activity == "working" { awaitingReply = false }
-                        approval = status.approval; liveActivity = status.activity; modelName = status.modelName; interactionConnected = true
+                        approval = status.approval; questionsSupported = status.questionsSupported; liveActivity = status.activity; modelName = status.modelName; interactionConnected = true
                         if approval != nil || ["waiting", "blocked"].contains(status.activity ?? "") { awaitingReply = false }
                     }
                 } catch {}
@@ -249,7 +231,7 @@ final class AgentChatModel {
         }
     }
 
-    func answer(_ session: DiscoveredMoshiSession, approval expected: AgentApproval? = nil, approve: Bool = false,
+    func answer(_ session: LiveAgentSession, approval expected: AgentApproval? = nil, approve: Bool = false,
                 question prompt: AgentQuestionPrompt? = nil, selections: [[Int]] = []) async {
         guard !answering, !sending, connected, let target else { return }
         guard (expected != nil && expected == approval && interactionConnected) || (prompt != nil && prompt == question && needsAnswer) else { return }
@@ -271,47 +253,50 @@ final class AgentChatModel {
             deliveryError = "Answer wasn't confirmed. Refresh or open Herdr to check the current prompt. Your answer hasn't been retried."
         }
     }
-    private func submitAnswer(_ session: DiscoveredMoshiSession, target: AgentChatTarget, approval: AgentApproval?, approve: Bool,
+    private func submitAnswer(_ session: LiveAgentSession, target: AgentChatTarget, approval: AgentApproval?, approve: Bool,
                               question: AgentQuestionPrompt?, selections: [[Int]]) async throws {
         let key = try DeviceSSHKey.load(session.host.id)
-        if let approval { try await MoshiConnection.answerApproval(host: session.host, privateKey: key, target: target, actionID: approval.actionId, approve: approve) }
-        else if let question { try await MoshiConnection.answerQuestions(host: session.host, privateKey: key, target: target, prompt: question, selections: selections) }
+        if let approval { try await PhrenConnection.answerApproval(host: session.host, privateKey: key, target: target, actionID: approval.actionId, approve: approve) }
+        else if let question { try await PhrenConnection.answerQuestions(host: session.host, privateKey: key, target: target, prompt: question, selections: selections) }
     }
 
-    func loadOlder(_ session: DiscoveredMoshiSession) async {
+    var historyError: String?
+
+    func loadOlder(_ session: LiveAgentSession) async {
         guard !loadingHistory, let target, let before = history.startLine, before > 0 else { return }
-        loadingHistory = true
+        loadingHistory = true; historyError = nil
         defer { loadingHistory = false }
         do {
             let page: AgentChatTranscript
             #if DEBUG && targetEnvironment(simulator)
             if AgentChatFixture.enabled { page = try AgentChatFixture.older(target) }
-            else { page = try await MoshiConnection.chatHistory(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, beforeLine: before) }
+            else { page = try await PhrenConnection.chatHistory(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, beforeLine: before) }
             #else
-            page = try await MoshiConnection.chatHistory(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, beforeLine: before)
+            page = try await PhrenConnection.chatHistory(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, beforeLine: before)
             #endif
-            guard self.target == target else { return }
+            guard !Task.isCancelled, self.target == target else { return }
             history.receive(page)
-        } catch { self.error = "Couldn't load earlier messages. \(error.localizedDescription)" }
+        } catch is CancellationError {
+        } catch { historyError = "Couldn't load earlier messages." }
     }
 
-    func stop(_ session: DiscoveredMoshiSession) async {
+    func stop(_ session: LiveAgentSession) async {
         guard !stopping, !sending, connected, !needsAnswer, let target else { return }
         stopping = true; deliveryError = nil
         defer { stopping = false }
         do {
             #if DEBUG && targetEnvironment(simulator)
             if AgentChatFixture.enabled { AgentChatFixture.stopped = true }
-            else { try await MoshiConnection.stopChatTurn(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target) }
+            else { try await PhrenConnection.stopChatTurn(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target) }
             #else
-            try await MoshiConnection.stopChatTurn(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target)
+            try await PhrenConnection.stopChatTurn(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target)
             #endif
             deliveryStatus = "Stop requested"
         } catch { deliveryError = "Stop wasn't confirmed. \(error.localizedDescription)" }
     }
 
     /// Uploads can be reused after failure; prompt delivery is never replayed.
-    func send(_ session: DiscoveredMoshiSession) async {
+    func send(_ session: LiveAgentSession) async {
         guard !sending, connected, !needsAnswer, let target,
               !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
         guard !AgentSlashCommand.isCommand(draft) || attachments.isEmpty else {
@@ -327,9 +312,9 @@ final class AgentChatModel {
                 let path: String
                 #if DEBUG && targetEnvironment(simulator)
                 if AgentChatFixture.enabled { path = try AgentChatFixture.upload(sent[index].attachment) }
-                else { path = try await MoshiConnection.uploadChatAttachment(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, attachment: sent[index].attachment) }
+                else { path = try await PhrenConnection.uploadChatAttachment(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, attachment: sent[index].attachment) }
                 #else
-                path = try await MoshiConnection.uploadChatAttachment(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, attachment: sent[index].attachment)
+                path = try await PhrenConnection.uploadChatAttachment(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, attachment: sent[index].attachment)
                 #endif
                 try Task.checkCancellation()
                 sent[index].path = path
@@ -347,9 +332,9 @@ final class AgentChatModel {
         do {
             #if DEBUG && targetEnvironment(simulator)
             if AgentChatFixture.enabled { try await AgentChatFixture.send(target, text: text) }
-            else { try await MoshiConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: text) }
+            else { try await PhrenConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: text) }
             #else
-            try await MoshiConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: text)
+            try await PhrenConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: text)
             #endif
             if draft == submitted { draft = "" }
             if AgentSlashCommand.isCommand(submitted) { awaitingReply = false; sentAt = nil }
@@ -364,10 +349,10 @@ final class AgentChatModel {
             deliveryError = "Delivery wasn't confirmed. Check the conversation before trying again. \(error.localizedDescription)"
         }
     }
-    static func fetchPanes(_ session: DiscoveredMoshiSession) async throws -> AgentChatPanes {
+    static func fetchPanes(_ session: LiveAgentSession) async throws -> AgentChatPanes {
         #if DEBUG && targetEnvironment(simulator)
         if AgentChatFixture.enabled { return try AgentChatFixture.panes(session) }
         #endif
-        return try await MoshiConnection.chatPanes(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), workspaceID: session.workspaceID, tabID: session.tab.id)
+        return try await PhrenConnection.chatPanes(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), workspaceID: session.workspaceID, tabID: session.tab.id)
     }
 }

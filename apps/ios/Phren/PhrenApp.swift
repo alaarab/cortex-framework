@@ -18,7 +18,7 @@ struct PhrenApp: App {
                 .tint(PhrenTheme.navigation)
                 // The phren identity is dark-only (docs/style.css).
                 .preferredColorScheme(.dark)
-                .modifier(MoshiURLTestCapture())
+                .modifier(ExternalURLTestCapture())
                 .task { await model.bootstrap() }
                 .onChange(of: scenePhase) { _, phase in
                     // Live sync runs only while the app is visible; returning
@@ -80,22 +80,22 @@ struct PhrenApp: App {
 
 /// UI tests inspect the actual URL handed to iOS, rather than merely checking
 /// that a button attempted to launch an unavailable app in the simulator.
-private struct MoshiURLTestCapture: ViewModifier {
+private struct ExternalURLTestCapture: ViewModifier {
     #if DEBUG && targetEnvironment(simulator)
     @State private var captured = ""
     #endif
     func body(content: Content) -> some View {
         #if DEBUG && targetEnvironment(simulator)
-        if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--capture-moshi-links") {
+        if AppModel.isUITesting && ProcessInfo.processInfo.arguments.contains("--capture-chat-links") {
             content
                 .environment(\.openURL, OpenURLAction { url in
-                    guard url.scheme == "moshi" else { return .systemAction }
+                    guard url.host == "example.org" else { return .systemAction }
                     captured = url.absoluteString
                     return .handled
                 })
                 .overlay(alignment: .top) {
                     Text(captured).font(.caption2)
-                        .accessibilityIdentifier("moshi-opened-url")
+                        .accessibilityIdentifier("chat-opened-url")
                         .allowsHitTesting(false)
                 }
         } else { content }

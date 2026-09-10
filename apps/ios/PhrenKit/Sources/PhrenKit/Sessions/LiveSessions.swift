@@ -1,8 +1,8 @@
 import Foundation
 
-/// The observed Moshi hook 0.3.19 workspace contract. A child is a tab;
+/// The Phren Hook v1 workspace contract. A child is a tab;
 /// it can aggregate several agent panes and is never claimed to be one agent.
-public struct MoshiWorkspaces: Decodable, Equatable, Sendable {
+public struct LiveWorkspaces: Decodable, Equatable, Sendable {
     public struct Tab: Decodable, Equatable, Sendable, Identifiable {
         public let id: String
         public let label: String
@@ -47,7 +47,7 @@ public struct MoshiWorkspaces: Decodable, Equatable, Sendable {
         guard data.count <= 1_048_576 else { throw PhrenKitError.validation("The session response is too large.") }
         let result = try JSONDecoder().decode(Self.self, from: data)
         guard result.kind == "herdr" else {
-            throw PhrenKitError.validation("Live sessions currently support the Moshi hook's default Herdr server.")
+            throw PhrenKitError.validation("Phren Hook returned an unsupported session provider.")
         }
         var groupIDs: Set<String> = []
         for group in result.groups {

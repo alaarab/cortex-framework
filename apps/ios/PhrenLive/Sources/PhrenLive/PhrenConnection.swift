@@ -21,25 +21,28 @@ public enum LiveConnectionError: LocalizedError, Equatable {
         case .untrustedHost: return "Verify this computer's SSH fingerprint before connecting."
         case .changedHost: return "This computer's SSH host key has changed. The connection was stopped. Verify the computer before removing and adding this connection again."
         case .authentication: return "SSH did not accept this device's key. Add the public key to the selected user's authorized_keys file and enable Remote Login or SSH."
-        case .timeout: return "The connection timed out. Check Tailscale, SSH, and that moshi-hook is running."
+        case .timeout: return "The connection timed out. Check Tailscale and SSH, then run phren bridge doctor on the computer."
         case .disconnected: return "The connection to the computer closed."
         case .response(let status): return "The computer returned HTTP \(status)."
         case .gatewayRejection(let status, let reason): return "\(reason) (HTTP \(status))"
-        case .oversized: return "The Moshi hook response exceeded this request's size limit."
+        case .oversized: return "The Phren Hook response exceeded this request's size limit."
         }
     }
 }
 
 /// Bounded, cancellable requests through a pinned SSH connection. Only the
 /// workspace, pane, transcript, and exact-session prompt routes are exposed.
-public enum MoshiConnection {
-    public static func fetch(host: LiveHost, privateKey: Data) async throws -> MoshiWorkspaces {
+public enum PhrenConnection {
+    public static func fetch(host: LiveHost, privateKey: Data) async throws -> LiveWorkspaces {
         try host.validate()
-        async let copilot = try? copilotDiscovery(host: host, key: privateKey)
         let data = try await fetchData(host: host, key: Curve25519.Signing.PrivateKey(rawRepresentation: privateKey))
         try Task.checkCancellation()
-        _ = try MoshiWorkspaces.read(data)
-        return try MoshiWorkspaces.read(CopilotDiscovery.mergeWorkspaces(data, copilot: await copilot))
+        guard let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let helper = response["phren"] as? [String: Any], helper["product"] as? String == "phren-hook",
+              helper["protocol"] as? Int == 1 else {
+            throw PhrenKitError.validation("Install Phren Hook on this computer with phren bridge install.")
+        }
+        return try LiveWorkspaces.read(data)
     }
 
     static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey, request: GatewayRequest = .workspaces,
@@ -114,7 +117,7 @@ final class PinnedHost: NIOSSHClientServerAuthenticationDelegate {
     let fingerprint: String?
     init(fingerprint: String?) { self.fingerprint = fingerprint }
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
-        guard let received = MoshiConnection.fingerprint(publicKey: String(openSSHPublicKey: hostKey)) else {
+        guard let received = PhrenConnection.fingerprint(publicKey: String(openSSHPublicKey: hostKey)) else {
             validationCompletePromise.fail(LiveConnectionError.changedHost)
             return
         }
@@ -160,26 +163,22 @@ private final class GatewayChannel: ChannelInboundHandler {
             let ssh = try context.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
             let child = context.eventLoop.makePromise(of: Channel.self)
             child.futureResult.whenFailure { [exchange] in exchange.finish(.failure($0)) }
-            if let command = request.progressCommand {
-                ssh.createChannel(child, channelType: .session) { [exchange] channel, _ in
-                    channel.pipeline.addHandler(ChatProgressFrames(exchange: exchange, command: command))
-                }
-                return
-            }
-            let target = SSHChannelType.DirectTCPIP(targetHost: "127.0.0.1", targetPort: 24543,
-                originatorAddress: try SocketAddress(ipAddress: "127.0.0.1", port: 0))
-            ssh.createChannel(child, channelType: .directTCPIP(target)) { [exchange, request] channel, type in
-                guard case .directTCPIP = type else {
+            ssh.createChannel(child, channelType: .session) { [exchange, request] channel, type in
+                guard case .session = type else {
                     return channel.eventLoop.makeFailedFuture(LiveConnectionError.disconnected)
                 }
-                if request.webSocket {
-                    return installTranscriptHandlers(channel: channel, exchange: exchange, request: request)
+                if let socket = request.terminalSocket {
+                    return channel.pipeline.addHandler(PhrenTerminalChannel(exchange: exchange, socket: socket,
+                        server: request.terminalServer ?? "default", columns: request.terminalColumns, rows: request.terminalRows))
                 }
-                return channel.eventLoop.makeCompletedFuture {
-                    try channel.pipeline.syncOperations.addHandlers(
-                        SSHHTTPBytes(), HTTPRequestEncoder(),
-                        ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)),
-                        GatewayResponse(exchange: exchange, request: request))
+                return channel.pipeline.addHandler(PhrenExecChannel(exchange: exchange)).flatMap {
+                    if request.webSocket { return installTranscriptHandlers(channel: channel, exchange: exchange, request: request) }
+                    return channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandlers(
+                            SSHHTTPBytes(), HTTPRequestEncoder(),
+                            ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .dropBytes)),
+                            GatewayResponse(exchange: exchange, request: request))
+                    }
                 }
             }
         } catch { exchange.finish(.failure(error)) }
@@ -217,7 +216,7 @@ final class GatewayResponse: ChannelInboundHandler {
     private var responseLimit: Int { status == 200 ? request.maximumResponseBytes : min(request.maximumResponseBytes, 32_768) }
     init(exchange: Exchange, request: GatewayRequest = .workspaces) { self.exchange = exchange; self.request = request }
     func channelActive(context: ChannelHandlerContext) {
-        var headers = HTTPHeaders([("Host", "127.0.0.1:24543"), ("Accept", "application/json"), ("Connection", "close")])
+        var headers = HTTPHeaders([("Host", "phren.local"), ("Accept", "application/json"), ("Connection", "close")])
         if let body = request.body {
             headers.add(name: "Content-Type", value: "application/json")
             headers.add(name: "Content-Length", value: String(body.count))

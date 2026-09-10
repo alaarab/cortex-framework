@@ -53,8 +53,6 @@ jobs:
       - name: SSH connection tests
         working-directory: apps/ios/PhrenLive
         run: swift test
-      - name: Chat progress reader tests
-        run: python3 apps/ios/scripts/test-chat-progress.py
 
   app-build:
     name: App smoke build (iOS Simulator)

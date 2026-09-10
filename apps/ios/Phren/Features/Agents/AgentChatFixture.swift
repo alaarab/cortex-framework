@@ -34,9 +34,9 @@ import UIKit
     }
     static func older(_ target: AgentChatTarget) throws -> AgentChatTranscript {
         let raw: [String: Any] = ["type": "response_item", "payload": ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Earlier project discussion"]]]]
-        return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": "older", "source": target.source, "entries": [["line": 0, "raw": raw]], "startLine": 0, "totalLines": 22, "hasMore": false]), source: target.source)
+        return try AgentChatTranscript.read(JSONSerialization.data(withJSONObject: ["type": "older", "source": target.source, "entries": [["line": 0, "raw": raw]], "startLine": 0, "totalLines": flag("--chat-long-history") ? 42 : 22, "hasMore": false]), source: target.source)
     }
-    static func panes(_ session: DiscoveredMoshiSession) throws -> AgentChatPanes {
+    static func panes(_ session: LiveAgentSession) throws -> AgentChatPanes {
         reads += 1
         if flag("--chat-offline") && hasReadTranscript { throw LiveConnectionError.disconnected }
         var panes: [[String: Any]] = [["id": "\(session.workspaceID):p1", "label": "1", "title": "Polish the phone app", "agent": flag("--chat-copilot") ? "copilot" : "codex",
@@ -61,6 +61,9 @@ import UIKit
         }
         append("user", "Can you refine the project screen?")
         append("assistant", target.source == "codex" ? "The project screen is ready. What would you like to change?" : target.source == "copilot" ? "Copilot is connected to this project. What would you like to change?" : "I reviewed the changes. The project navigation looks consistent.")
+        if flag("--chat-long-history") {
+            for index in 0..<20 { append("assistant", "Recent discussion \(index). " + String(repeating: "Keep the current message visible while older history loads. ", count: 3)) }
+        }
         if flag("--chat-design") {
             append("user", "Make the conversation easier to read. Keep the details close by.")
             append("assistant", "I'll tighten the session header and collect tool activity into a single row. Replies will have more room to breathe.")
@@ -72,7 +75,7 @@ import UIKit
             append("assistant", "The conversation has a quieter layout now. Commands and results stay together; tap the Shell row to see everything.\n\nThe terminal is one tap away in the header, and your draft stays with this session when you come back.")
         }
         if flag("--chat-markdown") { append("assistant", "# Changes\nHere is the fix:\n```swift\nlet color = \"cyan\"\n```\nReady to test.") }
-        if flag("--chat-link") { append("assistant", "[Open linked page](moshi://fixture-link)") }
+        if flag("--chat-link") { append("assistant", "[Open linked page](https://example.org/phren-fixture)") }
         // Real transcripts retain the tool call after it is answered. Keep its
         // line stable so the reply appends instead of reusing a tool message ID.
         if flag("--chat-question") {

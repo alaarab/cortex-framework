@@ -114,6 +114,6 @@ private struct WebServerSection: View {
             return try WebServer.readSnapshot(Data(#"{"servers":[{"name":"Phone preview","port":19473,"origin":"http://127.0.0.1:19473","process":"node"},{"name":"Project dashboard","port":19474,"origin":"http://127.0.0.1:19474","process":"bun"}]}"#.utf8))
         }
         #endif
-        return try await MoshiConnection.webServers(host: host, privateKey: DeviceSSHKey.load(host.id))
+        return try await PhrenConnection.webServers(host: host, privateKey: DeviceSSHKey.load(host.id))
     }
 }

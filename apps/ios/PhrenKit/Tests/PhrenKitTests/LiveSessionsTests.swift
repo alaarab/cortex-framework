@@ -5,18 +5,18 @@ final class LiveSessionsTests: XCTestCase {
     private let fixture = Data(#"{"kind":"herdr","capabilities":{"paneList":true},"groups":[{"id":"wA","label":"Project","agentStatus":"working","children":[{"id":"wA:t2","label":"Build","agentStatus":"working","agent":"codex","sessionId":"agent-conversation-not-a-herdr-server","cwd":"/work/app","agentPaneCount":2},{"id":"wA:t3","label":"Shell"}]}]}"#.utf8)
 
     func testObservedHookContractAndUnknownState() throws {
-        let value = try MoshiWorkspaces.read(fixture)
+        let value = try LiveWorkspaces.read(fixture)
         XCTAssertEqual(value.groups[0].children[0].status, "Working")
         XCTAssertEqual(value.groups[0].children[0].agentPaneCount, 2)
         XCTAssertEqual(value.groups[0].children[1].status, "Unknown")
         XCTAssertNil(value.groups[0].children[1].cwd)
-        XCTAssertThrowsError(try MoshiWorkspaces.read(Data(#"{"kind":"tmux","groups":[]}"#.utf8)))
-        XCTAssertThrowsError(try MoshiWorkspaces.read(Data(repeating: 32, count: 1_048_577)))
-        XCTAssertThrowsError(try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"a","children":[]},{"id":"w1","label":"b","children":[]}]}"#.utf8)))
+        XCTAssertThrowsError(try LiveWorkspaces.read(Data(#"{"kind":"tmux","groups":[]}"#.utf8)))
+        XCTAssertThrowsError(try LiveWorkspaces.read(Data(repeating: 32, count: 1_048_577)))
+        XCTAssertThrowsError(try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"a","children":[]},{"id":"w1","label":"b","children":[]}]}"#.utf8)))
     }
 
     func testReadableTitlesAndConservativeActivity() throws {
-        let value = try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone","children":[{"id":"w1:t1","label":"1","title":"  Build the phone app  ","agentStatus":"blocked","agentPaneCount":2,"paneCount":3},{"id":"w1:t2","label":"Shell","title":"  ","agentStatus":"future-state"}]}]}"#.utf8))
+        let value = try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone","children":[{"id":"w1:t1","label":"1","title":"  Build the phone app  ","agentStatus":"blocked","agentPaneCount":2,"paneCount":3},{"id":"w1:t2","label":"Shell","title":"  ","agentStatus":"future-state"}]}]}"#.utf8))
         let tabs = value.groups[0].children
         XCTAssertEqual(tabs[0].displayTitle, "Build the phone app")
         XCTAssertEqual(tabs[0].activity, .waiting)
@@ -29,7 +29,7 @@ final class LiveSessionsTests: XCTestCase {
     }
 
     func testSearchFindsTitleWorkspaceAgentAndFolderTogether() throws {
-        let value = try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone work","children":[{"id":"w1:t1","label":"1","title":"Fix navigation","agent":"codex","cwd":"/work/mobile/src"}]}]}"#.utf8))
+        let value = try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[{"id":"w1","label":"Phone work","children":[{"id":"w1:t1","label":"1","title":"Fix navigation","agent":"codex","cwd":"/work/mobile/src"}]}]}"#.utf8))
         let host = try LiveHost(name: "Mac", address: "fixture.invalid", username: "fixture")
         let session = try XCTUnwrap(value.sessions(on: host).first)
         XCTAssertTrue(session.matches("NAVIGATION codex"))

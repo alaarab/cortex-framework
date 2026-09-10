@@ -1,17 +1,14 @@
 import Foundation
 import PhrenKit
 
-extension MoshiConnection {
+extension PhrenConnection {
     public static func interactionUpdates(host: LiveHost, privateKey: Data, target: AgentChatTarget) -> AsyncThrowingStream<AgentInteractionStatus, Error> {
         AsyncThrowingStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
             let task = Task {
                 do {
                     try checkHost(host, target)
-                    let watch = try JSONSerialization.data(withJSONObject: ["watch": [
-                        "agent": ["source": target.source, "session": target.sessionID], "context": false,
-                        "workspaces": false, "mux": host.muxID] as [String: Any]])
                     _ = try await fetchData(host: host, key: .init(rawRepresentation: privateKey),
-                        request: .init(path: "/events", webSocket: true, streaming: true, initialMessages: [watch])) { data in
+                        request: .init(path: GatewayRequest.path("/v1/status", GatewayRequest.targetQuery(target)), webSocket: true, streaming: true)) { data in
                             if let status = try AgentInteractionStatus.read(data, target: target) { continuation.yield(status) }
                         }
                     continuation.finish()
@@ -37,24 +34,22 @@ extension MoshiConnection {
         try Task.checkCancellation()
         // The helper compares the exact action/prompt against the live terminal.
         // Never retry an ambiguous response: these requests enter terminal input.
-        try requireOK(await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .init(path: path, body: body)))
+        try requireOK(await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .init(path: path, body: GatewayRequest.targetBody(target, fields: (try JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]))))
     }
 
     public static func transcriptImage(host: LiveHost, privateKey: Data, target: AgentChatTarget, line: Int, block: Int) async throws -> Data {
         try checkHost(host, target)
         guard line >= 0, (0..<2_000).contains(block) else { throw PhrenKitError.validation("Invalid image reference.") }
         return try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .init(
-            path: GatewayRequest.path("/v1/transcripts/blob", ["source": target.source, "session": target.sessionID, "line": "\(line)", "block": "\(block)"]), maximumResponseBytes: 8_388_608))
+            path: GatewayRequest.path("/v1/transcripts/blob", GatewayRequest.targetQuery(target).merging(["line": "\(line)", "block": "\(block)"]) { _, new in new }), maximumResponseBytes: 8_388_608))
     }
 
     public static func repositoryDiff(host: LiveHost, privateKey: Data, target: AgentChatTarget) async throws -> AgentRepositoryDiff {
         try checkHost(host, target)
         let pane = try await chatPanes(host: host, privateKey: privateKey, workspaceID: target.workspaceID, tabID: target.tabID).validate(target)
         guard let cwd = pane.cwd, cwd.hasPrefix("/"), cwd.utf8.count <= 4_096 else { throw PhrenKitError.validation("This pane has no repository folder.") }
-        let start = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .init(
-            path: "/v1/diff/start", body: JSONSerialization.data(withJSONObject: ["cwd": cwd])))
-        let path = try AgentRepositoryDiff.statusPath(start)
-        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .init(path: path, maximumResponseBytes: 8_388_608))
+        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .init(
+            path: "/v1/diff", body: GatewayRequest.targetBody(target), maximumResponseBytes: 8_388_608))
         return try AgentRepositoryDiff.read(data)
     }
 

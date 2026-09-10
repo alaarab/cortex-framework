@@ -20,7 +20,7 @@ final class AgentChatTests: XCTestCase {
 
     @MainActor
     func testTranscriptLinkStillOpensWhileKeyboardIsVisible() {
-        let app = launch(extra: ["--chat-link", "--capture-moshi-links"])
+        let app = launch(extra: ["--chat-link", "--capture-chat-links"])
         app.buttons["live-chat:w7:w7:t9"].tap()
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         XCTAssertTrue(composer.waitForExistence(timeout: 8))
@@ -29,9 +29,9 @@ final class AgentChatTests: XCTestCase {
         XCTAssertTrue(link.waitForExistence(timeout: 5))
         link.tap()
         app.buttons["chat-close"].tap()
-        let captured = app.staticTexts["moshi-opened-url"]
+        let captured = app.staticTexts["chat-opened-url"]
         XCTAssertTrue(captured.waitForExistence(timeout: 5))
-        XCTAssertEqual(captured.label, "moshi://fixture-link")
+        XCTAssertEqual(captured.label, "https://example.org/phren-fixture")
     }
 
     @MainActor
@@ -345,12 +345,25 @@ final class AgentChatTests: XCTestCase {
     func testEarlierHistorySurvivesLiveRefresh() {
         let app = launch(extra: ["--chat-history"])
         app.buttons["live-chat:w7:w7:t9"].tap()
-        XCTAssertTrue(app.buttons["chat-history"].waitForExistence(timeout: 5))
-        app.buttons["chat-history"].tap()
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 5))
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["chat-history"].exists)
+    }
+
+    @MainActor
+    func testScrollingUpLoadsHistoryWithoutAButton() {
+        let app = launch(extra: ["--chat-history", "--chat-long-history"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let transcript = app.scrollViews["chat-transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Recent discussion 19.")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Earlier project discussion"].exists)
+        for _ in 0..<10 where !app.staticTexts["Earlier project discussion"].exists { transcript.swipeDown(velocity: .fast) }
+        XCTAssertTrue(app.staticTexts["Earlier project discussion"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Load earlier messages"].exists)
+        XCTAssertTrue(app.buttons["chat-close"].exists)
     }
 
     @MainActor
@@ -486,11 +499,12 @@ final class AgentChatTests: XCTestCase {
     }
 
     @MainActor
-    func testMoshiPreferenceOpensTheSameWorkspaceDirectly() {
-        let app = launch(extra: ["--prefer-moshi", "--capture-moshi-links"])
+    func testSessionHasOnlyNativeChatAndTerminalActions() {
+        let app = launch()
         app.buttons["live-chat:w7:w7:t9"].tap()
-        app.assertMoshiOpened("moshi://herdr?workspace=w7")
-        XCTAssertFalse(app.buttons["chat-close"].exists)
+        XCTAssertTrue(app.buttons["chat-close"].waitForExistence(timeout: 5))
+        app.buttons["Chat options"].tap()
+        XCTAssertFalse(app.buttons["Open in Moshi"].exists)
     }
 
     @MainActor

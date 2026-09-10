@@ -42,7 +42,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         terminal.selectionHandleColor = UIColor(PhrenTheme.lavender)
         terminal.accessibilityIdentifier = "herdr-terminal"
     }
-    func run(host: LiveHost, session: DiscoveredMoshiSession?, target: AgentChatTarget?, paneID: String?, commandMenu: Bool = false) async {
+    func run(host: LiveHost, session: LiveAgentSession?, target: AgentChatTarget?, paneID: String?, commandMenu: Bool = false) async {
         let run = UUID(); generation = run
         connected = false; reconnecting = false; error = nil
         defer {
@@ -95,19 +95,19 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
             var canOpenCommands = false
             if let target {
                 guard target.hostID == host.id, target.muxID == host.muxID else { throw PhrenKitError.validation("Reopen this terminal from the current computer.") }
-                let pane = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: target.workspaceID, tabID: target.tabID).validate(target)
+                let pane = try await PhrenConnection.chatPanes(host: host, privateKey: key, workspaceID: target.workspaceID, tabID: target.tabID).validate(target)
                 canOpenCommands = ["idle", "done"].contains(pane.agentStatus ?? "")
-                try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .focus,
+                try await PhrenConnection.herdrAction(host: host, privateKey: key, operation: .focus,
                                                      workspaceID: target.workspaceID, tabID: target.tabID, paneID: target.paneID)
             } else if let session {
                 guard session.host == host else { throw PhrenKitError.validation("The Herdr server changed.") }
-                let fresh = try await MoshiConnection.fetch(host: host, privateKey: key)
+                let fresh = try await PhrenConnection.fetch(host: host, privateKey: key)
                 guard fresh.sessions(on: host).contains(where: { $0.id == session.id }) else { throw PhrenKitError.validation("This Herdr tab has closed.") }
                 if let paneID {
-                    let list = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: session.workspaceID, tabID: session.tab.id)
+                    let list = try await PhrenConnection.chatPanes(host: host, privateKey: key, workspaceID: session.workspaceID, tabID: session.tab.id)
                     guard list.panes.contains(where: { $0.id == paneID }) else { throw PhrenKitError.validation("This pane has closed.") }
                 }
-                try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .focus, workspaceID: session.workspaceID, tabID: session.tab.id, paneID: paneID)
+                try await PhrenConnection.herdrAction(host: host, privateKey: key, operation: .focus, workspaceID: session.workspaceID, tabID: session.tab.id, paneID: paneID)
             }
             var recovery = HerdrTerminalRecovery()
             var receivedBefore = false
@@ -116,7 +116,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
                 connectionID = UUID()
                 var first = true
                 do {
-                    for try await bytes in MoshiConnection.herdrTerminal(host: host, privateKey: key, socket: socket,
+                    for try await bytes in PhrenConnection.herdrTerminal(host: host, privateKey: key, socket: socket,
                                                                        columns: terminal.getTerminal().cols, rows: terminal.getTerminal().rows) {
                         try Task.checkCancellation()
                         guard generation == run else { return }
@@ -240,7 +240,7 @@ private struct HerdrTerminalSurface: UIViewRepresentable {
 
 struct HerdrTerminalView: View {
     let host: LiveHost
-    var session: DiscoveredMoshiSession? = nil
+    var session: LiveAgentSession? = nil
     var target: AgentChatTarget? = nil
     var paneID: String? = nil
     var commandMenu = false

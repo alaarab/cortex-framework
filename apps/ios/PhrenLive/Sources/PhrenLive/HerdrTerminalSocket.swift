@@ -1,6 +1,6 @@
 import Foundation
 import NIOCore
-import NIOWebSocket
+import NIOSSH
 import PhrenKit
 
 /// One Herdr client in the configured server, carried by the existing SSH key.
@@ -14,38 +14,36 @@ public final class HerdrTerminalSocket: @unchecked Sendable {
 
     public func input(_ text: String) async throws {
         guard !text.isEmpty, text.utf8.count <= 65_536 else { return }
-        try await send(["type": "input", "data": text])
+        guard let channel = current(), channel.isActive else { throw LiveConnectionError.disconnected }
+        try await channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: text)))).get()
     }
     public func resize(columns: Int, rows: Int) async throws {
         guard (10...500).contains(columns), (2...300).contains(rows) else { return }
-        try await send(["type": "resize", "cols": columns, "rows": rows])
+        guard let channel = current(), channel.isActive else { throw LiveConnectionError.disconnected }
+        try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.WindowChangeRequest(
+            terminalCharacterWidth: columns, terminalRowHeight: rows, terminalPixelWidth: 0, terminalPixelHeight: 0)).get()
     }
     public func acknowledge(_ bytes: Int) async throws {
         guard bytes >= 0, bytes <= 8_388_608 else { return }
-        try await send(["type": "ack", "bytes": bytes])
-    }
-    private func send(_ value: [String: Any]) async throws {
-        let data = try JSONSerialization.data(withJSONObject: value)
         guard let channel = current(), channel.isActive else { throw LiveConnectionError.disconnected }
-        try await channel.writeAndFlush(WebSocketFrame(fin: true, opcode: .text, maskKey: .random(), data: ByteBuffer(bytes: data))).get()
+        try await channel.triggerUserOutboundEvent(TerminalAcknowledged(bytes: bytes)).get()
     }
 }
 
-extension MoshiConnection {
+extension PhrenConnection {
     public static func herdrTerminal(host: LiveHost, privateKey: Data, socket: HerdrTerminalSocket,
                                      columns: Int = 80, rows: Int = 24) -> HerdrTerminalOutput {
         let buffer = TerminalOutputBuffer()
         let signals = AsyncThrowingStream<Void, Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let task = Task {
                 do {
-                    let size = try JSONSerialization.data(withJSONObject: ["type": "resize", "cols": min(500, max(10, columns)), "rows": min(300, max(2, rows))])
-                    let request = GatewayRequest(path: GatewayRequest.path("/v1/pty", ["mux": "herdr", "muxSession": host.herdrSession ?? "default"]),
-                                                 webSocket: true, streaming: true,
-                                                 initialMessages: [Data(#"{"type":"ack","bytes":0}"#.utf8), size], terminalSocket: socket)
+                    let request = GatewayRequest(path: "", streaming: true, terminalSocket: socket,
+                                                 terminalServer: host.herdrSession ?? "default",
+                                                 terminalColumns: min(500, max(10, columns)), terminalRows: min(300, max(2, rows)))
                     _ = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request) { data in
                         try buffer.append(data)
                         // Only wakeups coalesce. Terminal bytes are never dropped:
-                        // escape sequences and UTF-8 can span WebSocket messages.
+                        // escape sequences and UTF-8 can span SSH packets.
                         continuation.yield(())
                     }
                     continuation.finish()
@@ -58,7 +56,7 @@ extension MoshiConnection {
 }
 
 /// Single-consumer, byte-bounded output. The consumer acknowledges only bytes
-/// it has rendered, so the helper's credit window applies backpressure.
+/// it has rendered, so the SSH receive window applies backpressure.
 public struct HerdrTerminalOutput: AsyncSequence, Sendable {
     public typealias Element = Data
     let buffer: TerminalOutputBuffer

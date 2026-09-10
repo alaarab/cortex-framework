@@ -14,7 +14,7 @@ extension AppModel {
 
 @Observable @MainActor
 private final class ProjectSessionDiscovery {
-    var sessions: [DiscoveredMoshiSession] = []
+    var sessions: [LiveAgentSession] = []
     var problems: [String] = []
     var refreshing = false
     var updated: Date?
@@ -25,7 +25,7 @@ private final class ProjectSessionDiscovery {
         generation = run
         refreshing = true
         defer { if generation == run { refreshing = false } }
-        var found: [DiscoveredMoshiSession] = []
+        var found: [LiveAgentSession] = []
         var failures: [String] = []
         await withTaskGroup(of: HostResult.self) { group in
             for host in hosts {
@@ -55,14 +55,13 @@ private final class ProjectSessionDiscovery {
     }
 
     private struct HostResult: Sendable {
-        let sessions: [DiscoveredMoshiSession]
+        let sessions: [LiveAgentSession]
         let problem: String?
     }
 }
 
 /// Opened by an explicit request to resume a project's session. Resolve once
-/// before offering a handoff. Discovery cannot establish which computer Moshi
-/// will use, so neither the first result nor later polls open another app.
+/// before opening the native chat or terminal on that exact computer.
 struct ProjectSessionsView: View {
     let storeID: String
     let project: String
@@ -70,17 +69,17 @@ struct ProjectSessionsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
     @AppStorage("sessions.live.preferences.v1") private var data = Data()
     @State private var discovery = ProjectSessionDiscovery()
     @State private var visible = false
     @State private var refreshID = UUID()
     @State private var error: String?
-    @State private var chatSession: DiscoveredMoshiSession?
+    @State private var chatSession: LiveAgentSession?
+    @State private var terminalSession: LiveAgentSession?
 
     private var preferences: LiveSessionPreferences? { try? LiveSessionPreferences.read(data) }
     private var target: SessionProject { SessionProject(storeID: storeID, name: project) }
-    private var matches: [DiscoveredMoshiSession] {
+    private var matches: [LiveAgentSession] {
         discovery.sessions.filter {
             preferences?.projectMatch(hostID: $0.host.id, cwd: $0.tab.cwd, projects: model.sessionProjects)?.project == target
         }
@@ -130,8 +129,11 @@ struct ProjectSessionsView: View {
                 }
             }
             .phrenScreen()
-            .modifier(MoshiLaunchAlert(error: $error))
+            .modifier(SessionLaunchAlert(error: $error))
             .sheet(item: $chatSession) { AgentChatSheet(session: $0) }
+            .sheet(item: $terminalSession) { session in
+                NavigationStack { HerdrTerminalView(host: session.host, session: session) }
+            }
             .onAppear { visible = true }
             .onDisappear { visible = false }
             .task(id: DiscoveryIdentity(data: data, active: visible && scenePhase == .active, refresh: refreshID)) {
@@ -145,7 +147,7 @@ struct ProjectSessionsView: View {
         }
     }
 
-    private func sessionRow(_ session: DiscoveredMoshiSession, assign: Bool) -> some View {
+    private func sessionRow(_ session: LiveAgentSession, assign: Bool) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let fresh = discovery.updated.map { context.date.timeIntervalSince($0) < 25 } == true
             Button { open(session, assign: assign) } label: {
@@ -154,25 +156,21 @@ struct ProjectSessionsView: View {
                     Text("\(session.host.name) · \(session.workspaceName)").font(.caption).lineLimit(1)
                     Text("\(session.tab.agent ?? "Terminal") · \(session.tab.status)\(fresh ? "" : " · refresh needed")").font(.caption)
                     if let cwd = session.tab.cwd { Text(cwd).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                    if !openChat && session.hasHostCollision(in: discovery.sessions) {
-                        Text("Also found on another computer. Check the computer shown in Moshi.")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
                     Label(openChat ? (assign ? "Use for \(project) and chat" : "Chat with agent")
-                          : (assign ? "Use for \(project) and open in Moshi" : "Open in Moshi"),
-                          systemImage: openChat ? "bubble.left.and.bubble.right" : "arrow.up.forward.app")
+                          : (assign ? "Use for \(project) and open terminal" : "Open terminal"),
+                          systemImage: openChat ? "bubble.left.and.bubble.right" : "terminal")
                         .font(.callout).foregroundStyle(PhrenTheme.accent)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!fresh || (!openChat && (try? session.link()) == nil) || (assign && session.tab.cwd == nil))
+            .disabled(!fresh || (assign && session.tab.cwd == nil))
             .accessibilityIdentifier("discovered-session:\(session.host.id):\(session.workspaceID):\(session.tab.id)")
         }
     }
 
-    private func open(_ session: DiscoveredMoshiSession, assign: Bool) {
+    private func open(_ session: LiveAgentSession, assign: Bool) {
         do {
             guard scenePhase == .active, visible,
                   discovery.updated.map({ Date().timeIntervalSince($0) < 25 }) == true,
@@ -182,22 +180,12 @@ struct ProjectSessionsView: View {
                 error = "This session changed or needs a refresh. Choose it again from the current list."
                 return
             }
-            if !openChat {
-                guard try current.link().url() == session.link().url() else {
-                    error = "This session's destination changed. Choose it again from the current list."
-                    return
-                }
-            }
             if assign, let cwd = current.tab.cwd {
                 data = try LiveSessionPreferences.assigning(hostID: session.host.id, directory: cwd,
                                                             storeID: storeID, project: project, in: data)
             }
             if openChat { chatSession = current; return }
-            let url = try current.link().url()
-            openURL(url) { accepted in
-                if accepted { dismiss() }
-                else { error = "Moshi couldn't be opened on this iPhone. Install it and open this computer's session there first." }
-            }
+            terminalSession = current
         } catch { self.error = error.localizedDescription }
     }
 

@@ -10,7 +10,7 @@ import SwiftUI
 }
 
 struct ChatHistoricalImage: View {
-    let session: DiscoveredMoshiSession
+    let session: LiveAgentSession
     let target: AgentChatTarget
     let line: Int
     let block: Int
@@ -39,9 +39,9 @@ struct ChatHistoricalImage: View {
                 if bytes == nil {
                     #if DEBUG && targetEnvironment(simulator)
                     if AgentChatFixture.enabled { bytes = AgentChatFixture.image.data }
-                    else { bytes = try await MoshiConnection.transcriptImage(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, line: line, block: block) }
+                    else { bytes = try await PhrenConnection.transcriptImage(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, line: line, block: block) }
                     #else
-                    bytes = try await MoshiConnection.transcriptImage(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, line: line, block: block)
+                    bytes = try await PhrenConnection.transcriptImage(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, line: line, block: block)
                     #endif
                 }
                 try Task.checkCancellation()

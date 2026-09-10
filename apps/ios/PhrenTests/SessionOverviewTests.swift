@@ -85,7 +85,7 @@ final class SessionOverviewTests: XCTestCase {
 
     func testFailureRetainsOnlyThatComputersStaleRowsAndClosedSessionsDisappear() async throws {
         let first = try host("Mac"), second = try host("Linux")
-        let working = try snapshot("working"), empty = try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
+        let working = try snapshot("working"), empty = try LiveWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
         var failFirst = false, closeSecond = false
         let model = SessionOverviewMonitor {
             LiveHostMonitor(pollInterval: .milliseconds(20)) { host, _ in
@@ -129,8 +129,8 @@ final class SessionOverviewTests: XCTestCase {
         model.groups(at: .now, query: query, preferences: nil, projects: [])
     }
     private func host(_ name: String) throws -> LiveHost { try LiveHost(name: name, address: name.lowercased() + ".invalid", username: "fixture") }
-    private func snapshot(_ status: String) throws -> MoshiWorkspaces {
-        try MoshiWorkspaces.read(Data("""
+    private func snapshot(_ status: String) throws -> LiveWorkspaces {
+        try LiveWorkspaces.read(Data("""
         {"kind":"herdr","groups":[{"id":"w1","label":"Project","children":[{"id":"w1:t1","label":"Build","agent":"codex","agentStatus":"\(status)"}]}]}
         """.utf8))
     }

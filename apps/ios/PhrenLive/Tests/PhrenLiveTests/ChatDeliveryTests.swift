@@ -21,19 +21,19 @@ final class ChatDeliveryTests: XCTestCase {
         let old = try JSONSerialization.data(withJSONObject: ["source": "codex", "sessionId": target.sessionID,
                                                              "pane": target.paneID, "tab": target.tabID, "text": "Old request"])
         do {
-            _ = try await MoshiConnection.fetchData(host: host, key: key, request: .init(path: "/v1/prompt", body: old))
+            _ = try await PhrenConnection.fetchData(host: host, key: key, request: .init(path: "/v1/prompt", body: old))
             XCTFail("Recorded terminal must reject")
         } catch {
             XCTAssertEqual(error as? LiveConnectionError, .gatewayRejection(status: 422, reason: "prompt target does not support text input"))
         }
-        try await MoshiConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: target, text: "Keep it up")
+        try await PhrenConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: target, text: "Keep it up")
         XCTAssertEqual(helper.messages, ["Keep it up"])
         XCTAssertEqual(helper.promptCount, 2)
 
         let changed = try AgentChatTarget(hostID: host.id, workspaceID: "w1", tabID: "w1:t1", paneID: "w1:p1",
                                           source: "codex", sessionID: "previous-session", muxID: host.muxID)
         do {
-            try await MoshiConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: changed, text: "Must not arrive")
+            try await PhrenConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: changed, text: "Must not arrive")
             XCTFail("Changed conversation must reject before input")
         } catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
         XCTAssertEqual(helper.promptCount, 2)
@@ -41,7 +41,7 @@ final class ChatDeliveryTests: XCTestCase {
         // A rejected live-pane request is also a single attempt. There is no
         // alternate target or automatic replay on any delivery error.
         do {
-            try await MoshiConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: target, text: "Reject this")
+            try await PhrenConnection.sendChat(host: host, privateKey: key.rawRepresentation, target: target, text: "Reject this")
             XCTFail("Expected live-pane rejection")
         } catch { XCTAssertEqual(error as? LiveConnectionError, .gatewayRejection(status: 422, reason: "target pane not found")) }
         XCTAssertEqual(helper.promptCount, 3)
@@ -91,15 +91,16 @@ private final class DeliveryHelper: @unchecked Sendable {
                 ["id": "w1:p1", "label": "codex", "agent": "codex", "agentStatus": "working", "sessionId": "current-session"]]]
         } else if parts.path == "/v1/prompt" {
             count += 1
-            let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: String] ?? [:]
+            let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+            let target = request["target"] as? [String: String] ?? [:]
             if request["sessionId"] != nil {
                 status = .unprocessableEntity; value = ["error": "prompt target does not support text input"]
-            } else if query != ["mux": "herdr:phone-test"] || request["pane"] != "w1:p1" || request["source"] != "codex" || request["tab"] != nil {
+            } else if target != ["server": "phone-test", "workspace": "w1", "tab": "w1:t1", "pane": "w1:p1", "source": "codex", "session": "current-session"] {
                 status = .conflict; value = ["error": "wrong destination"]
-            } else if request["text"] == "Reject this" {
+            } else if request["text"] as? String == "Reject this" {
                 status = .unprocessableEntity; value = ["error": "target pane not found"]
             } else {
-                accepted.append(request["text"] ?? ""); value = ["ok": true]
+                accepted.append(request["text"] as? String ?? ""); value = ["ok": true]
             }
         } else { status = .notFound; value = ["error": "unknown route"] }
         return (status, try! JSONSerialization.data(withJSONObject: value))

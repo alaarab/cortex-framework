@@ -2,38 +2,31 @@ import PhrenKit
 import PhrenLive
 import SwiftUI
 
-/// Shared entry point; the preference changes where a normal agent tap opens.
+/// Every agent opens in Phren with its exact computer and conversation.
 struct AgentConversationLink<LabelContent: View>: View {
-    let session: DiscoveredMoshiSession
-    var honorsPreference = true
+    let session: LiveAgentSession
     var onOpenInPhren: (() -> Void)? = nil
     @ViewBuilder var label: LabelContent
-    @AppStorage("agents.preferMoshi.v1") private var preferMoshi = false
-    @Environment(\.openURL) private var openURL
     @State private var showingChat = false
-    @State private var error: String?
 
     var body: some View {
         Button {
-            if honorsPreference && preferMoshi, let url = try? session.link().url() {
-                openURL(url) { accepted in if !accepted { error = "Moshi couldn't be opened. Choose Phren chat in Settings or open Moshi on this iPhone." } }
-            } else if let onOpenInPhren { onOpenInPhren() }
+            if let onOpenInPhren { onOpenInPhren() }
             else { showingChat = true }
         } label: { label }
         .sheet(isPresented: $showingChat) { AgentChatSheet(session: session) }
-        .modifier(MoshiLaunchAlert(error: $error))
     }
 }
 
 struct AgentChatSheet: View {
-    let session: DiscoveredMoshiSession
+    let session: LiveAgentSession
     var body: some View {
         NavigationStack { AgentChatView(session: session) }
     }
 }
 
 struct AgentChatView: View {
-    let session: DiscoveredMoshiSession
+    let session: LiveAgentSession
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
@@ -51,6 +44,9 @@ struct AgentChatView: View {
     @State private var previewImage: ChatAttachmentDraft?
     @State private var historyTask: Task<Void, Never>?
     @State private var atBottom = true
+    @State private var nearHistoryTop = false
+    @State private var paginationReady = false
+    @State private var requestedHistoryLine: Int?
     @State private var scrollHeight: CGFloat = 0
     @ScaledMetric(relativeTo: .body) private var composerTextSize = 14.0
     @FocusState private var composing: Bool
@@ -95,25 +91,27 @@ struct AgentChatView: View {
                             Text("Native chat supports Codex, Claude Code, and GitHub Copilot sessions recognized on this computer.")
                                 .font(.footnote).foregroundStyle(PhrenTheme.textMuted)
                             if model.panes.contains(where: { $0.agent == "copilot" }) {
-                                Link("Set up Copilot chat", destination: URL(string: "https://github.com/alaarab/phren/blob/main/apps/ios/README.md#github-copilot-cli")!)
+                                Link("Set up Copilot chat", destination: URL(string: "https://alaarab.github.io/phren/phren-hook.html")!)
                                     .font(.footnote)
                             }
                         }
                         if let error = model.error { connectionIssue(error) }
                         if currentHost != session.host { connectionIssue("This computer's connection changed. Reopen chat from the current session list.") }
                         if model.hasMore {
-                            Button {
-                                let anchor = model.messages.first?.id
-                                historyTask = Task {
-                                    await model.loadOlder(session)
-                                    if let anchor, let row = ChatTimelineEntry.group(model.messages).first(where: { $0.messages.contains { $0.id == anchor } }) {
-                                        proxy.scrollTo(row.id, anchor: .top)
-                                    }
+                            VStack(spacing: 8) {
+                                if model.loadingHistory { ProgressView().accessibilityLabel("Loading earlier messages") }
+                                else if model.historyError != nil {
+                                    Button("Retry loading earlier messages") {
+                                        requestedHistoryLine = nil
+                                        loadHistoryIfNeeded(proxy)
+                                    }.font(.caption)
                                 }
-                            } label: {
-                                if model.loadingHistory { ProgressView() }
-                                else { Label("Load earlier messages", systemImage: "clock.arrow.circlepath") }
-                            }.disabled(model.loadingHistory || !active).accessibilityIdentifier("chat-history")
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 24)
+                            .background(GeometryReader { geometry in
+                                Color.clear.preference(key: ChatHistoryPosition.self, value: geometry.frame(in: .named("chat-scroll")).minY)
+                            })
+                            .accessibilityIdentifier("chat-history")
                         }
                         if model.history.reachedLimit {
                             Text("Showing the most recent loaded history to keep this chat responsive.").font(.caption).foregroundStyle(PhrenTheme.textDim)
@@ -133,7 +131,7 @@ struct AgentChatView: View {
                                 }).id(message.id)
                             }
                         }
-                        if let prompt = model.question, model.needsAnswer {
+                        if let prompt = model.question, model.needsAnswer, model.questionsSupported {
                             ChatQuestionCard(prompt: prompt, busy: model.answering || !active || !model.connected) { selections in
                                 sendTask = Task { await model.answer(session, question: prompt, selections: selections) }
                             }.id(prompt.id)
@@ -149,8 +147,23 @@ struct AgentChatView: View {
                     }
                     .padding(18)
                 }
+                .accessibilityIdentifier("chat-transcript")
                 .contentShape(Rectangle())
                 .simultaneousGesture(TapGesture().onEnded { composing = false })
+                .modifier(ChatHistoryScrollObserver { near in
+                    nearHistoryTop = near
+                    loadHistoryIfNeeded(proxy)
+                })
+                .task(id: active && model.connected) {
+                    paginationReady = false
+                    guard active, model.connected else { return }
+                    // Let the first backlog settle at the bottom before deciding
+                    // whether the viewport needs an earlier page.
+                    do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+                    paginationReady = true
+                    loadHistoryIfNeeded(proxy)
+                }
+                .onChange(of: model.history.startLine) { _, _ in loadHistoryIfNeeded(proxy) }
                 .scrollDismissesKeyboard(.interactively)
                 .defaultScrollAnchor(.bottom)
                 .coordinateSpace(name: "chat-scroll")
@@ -166,18 +179,22 @@ struct AgentChatView: View {
                         }.accessibilityLabel("Latest messages").padding(12)
                     }
                 }
-                .onChange(of: model.target?.id) { _, _ in proxy.scrollTo("chat-bottom", anchor: .bottom) }
+                .onChange(of: model.target?.id) { _, _ in
+                    historyTask?.cancel(); requestedHistoryLine = nil
+                    proxy.scrollTo("chat-bottom", anchor: .bottom)
+                }
                 .onChange(of: model.messages.last?.id) { _, _ in
-                    if atBottom { withAnimation { proxy.scrollTo("chat-bottom", anchor: .bottom) } }
+                    if atBottom && !model.loadingHistory { withAnimation { proxy.scrollTo("chat-bottom", anchor: .bottom) } }
                 }
                 .onChange(of: model.reveal.revision) { _, _ in
-                    if atBottom { proxy.scrollTo("chat-bottom", anchor: .bottom) }
+                    if atBottom && !model.loadingHistory { proxy.scrollTo("chat-bottom", anchor: .bottom) }
                 }
             }
             composer
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         }
         .background(PhrenTheme.chatCanvas)
+        .interactiveDismissDisabled(model.hasMore || model.loadingHistory)
         .navigationTitle("Agent chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
@@ -245,6 +262,25 @@ struct AgentChatView: View {
         }
     }
 
+    private func loadHistoryIfNeeded(_ proxy: ScrollViewProxy) {
+        guard active, paginationReady, model.connected, model.hasMore, !model.loadingHistory,
+              historyTask == nil, nearHistoryTop,
+              let line = model.history.startLine, line > 0, requestedHistoryLine != line else { return }
+        requestedHistoryLine = line
+        let anchor = ChatTimelineEntry.group(model.messages).first?.id
+        let target = model.target
+        historyTask = Task {
+            defer { historyTask = nil }
+            await model.loadOlder(session)
+            guard !Task.isCancelled, model.target == target else { return }
+            await Task.yield()
+            if let anchor {
+                var transaction = Transaction(); transaction.disablesAnimations = true
+                withTransaction(transaction) { proxy.scrollTo(anchor, anchor: .top) }
+            }
+        }
+    }
+
     private var chatHeader: some View {
         HStack(spacing: 10) {
             Button { dismiss() } label: {
@@ -282,9 +318,6 @@ struct AgentChatView: View {
             NavigationLink { HerdrWorkspacesView(hostID: session.host.id).toolbar(.visible, for: .navigationBar) } label: { Label("Herdr workspaces", systemImage: "rectangle.split.3x1") }
             if let target = model.target {
                 NavigationLink { AgentDiffView(session: session, target: target).toolbar(.visible, for: .navigationBar) } label: { Label("Repository changes", systemImage: "arrow.triangle.branch") }
-            }
-            if let destination = try? session.link().url() {
-                Link("Open terminal in Moshi", destination: destination)
             }
             if let project {
                 NavigationLink("Project memory") { ProjectDetailView(storeId: project.storeID, project: project.name).toolbar(.visible, for: .navigationBar) }
@@ -514,6 +547,24 @@ private struct ChatMessageRow<Historical: View>: View {
         .contextMenu {
             Button("Copy message", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
             ShareLink(item: message.text)
+        }
+    }
+}
+
+private struct ChatHistoryPosition: PreferenceKey {
+    static var defaultValue: CGFloat = -CGFloat.greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct ChatHistoryScrollObserver: ViewModifier {
+    let changed: (Bool) -> Void
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.contentInsets.top < 140
+            } action: { _, near in changed(near) }
+        } else {
+            content.onPreferenceChange(ChatHistoryPosition.self) { position in changed(position >= -140) }
         }
     }
 }
