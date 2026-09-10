@@ -54,9 +54,10 @@ Connect upload or TestFlight installation.
 
 ## Phase 2 — Publish the two required URLs
 
-- [ ] Publish `privacy-policy.md` → `https://alaarab.github.io/phren/privacy.html`
-- [ ] Publish `support.md` → `https://alaarab.github.io/phren/support.html`
-- [ ] Open both in a browser and confirm they load. App Review does check,
+- [x] Publish `privacy-policy.md` → `https://alaarab.github.io/phren/privacy.html`
+- [x] Publish `support.md` → `https://alaarab.github.io/phren/support.html`
+- [x] Retrieve both over HTTPS and confirm their content matches the source.
+      Verified September 10 after the GitHub Pages deployment. App Review does check,
       and a 404 is a rejection.
 
 ## Phase 3 — Demo account
@@ -64,8 +65,10 @@ Connect upload or TestFlight installation.
 App Review cannot get past the sign-in screen without a token. Full
 instructions in `review-notes.md`.
 
-- [ ] Public demo repository seeded with a small phren store, including
+- [x] Public demo repository seeded with a small phren store, including
       review-queue items so triage mode has content
+      — [alaarab/phren-ios-demo](https://github.com/alaarab/phren-ios-demo),
+      three synthetic projects with findings, tasks, notes, skills, and review items.
 - [ ] Fine-grained PAT for it: Contents Read and write, Metadata Read,
       **expiry at least 90 days out**
 - [ ] Token pasted into App Store Connect's App Review Information
