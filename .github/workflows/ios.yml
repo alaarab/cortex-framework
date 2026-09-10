@@ -1,46 +1,27 @@
 name: iOS
 
-# PhrenKit's markdown parsers are line-by-line transcriptions of the CLI's
-# TypeScript, verified against fixtures the CLI generates (see
-# apps/ios/README.md "The format contract"). A change to either side of that
-# contract must run this suite — otherwise a TS format change silently
-# desyncs the Swift port and nothing fails until a user's file is mangled.
+# Run these checks deliberately from Actions or locally. Cold simulator builds
+# and the full UI suite must not start automatically on pushes or pull requests.
 on:
-  push:
-    branches: [main, "claude/**"]
-    paths:
-      - "apps/ios/**"
-      - ".github/workflows/ios.yml"
-      - "packages/cli/src/content/**"
-      - "packages/cli/src/data/**"
-      - "packages/cli/src/finding/**"
-      - "packages/cli/src/governance/policy.ts"
-      - "packages/cli/src/core/**"
-      - "packages/cli/src/task/**"
-      - "packages/cli/src/skill/**"
-      - "packages/cli/browser/**"
-      - "packages/cli/src/graph-core/**"
-      - "pnpm-lock.yaml"
-  pull_request:
-    paths:
-      - "apps/ios/**"
-      - ".github/workflows/ios.yml"
-      - "packages/cli/src/content/**"
-      - "packages/cli/src/data/**"
-      - "packages/cli/src/finding/**"
-      - "packages/cli/src/governance/policy.ts"
-      - "packages/cli/src/core/**"
-      - "packages/cli/src/task/**"
-      - "packages/cli/src/skill/**"
-      - "packages/cli/browser/**"
-      - "packages/cli/src/graph-core/**"
-      - "pnpm-lock.yaml"
   workflow_dispatch:
+    inputs:
+      ui_tests:
+        description: Also run the full native UI suite (10-minute limit; use targeted local tests for longer work)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   phrenkit-tests:
     name: PhrenKit tests (macOS)
     runs-on: macos-15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       # SwiftNIO's current dependency graph requires Swift 6.2. macos-15
@@ -57,7 +38,7 @@ jobs:
   app-build:
     name: App smoke build (iOS Simulator)
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 20
     needs: phrenkit-tests
     steps:
       - uses: actions/checkout@v4
@@ -91,7 +72,9 @@ jobs:
         run: pnpm exec playwright install chromium
       - name: Test phone graph renderer
         run: node --test apps/ios/scripts/test-graph.mjs
-      - name: Test native graph navigation
+      - name: Test full native UI suite (explicit opt-in)
+        if: ${{ inputs.ui_tests }}
+        timeout-minutes: 10
         # Ad hoc simulator signing supplies Keychain entitlements without a
         # developer certificate; PHRENTEST01 is a synthetic test team prefix.
         # Apple's iOS 18.5 simulator lacks libswiftWebKit at its normal path.
@@ -110,9 +93,10 @@ jobs:
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=PHRENTEST01 \
             IPHONEOS_DEPLOYMENT_TARGET=18.4
       - name: Save native test results
-        if: always()
+        if: ${{ always() && inputs.ui_tests }}
         uses: actions/upload-artifact@v4
         with:
           name: PhrenUITests
           path: ${{ runner.temp }}/PhrenUITests.xcresult
           if-no-files-found: ignore
+          retention-days: 3

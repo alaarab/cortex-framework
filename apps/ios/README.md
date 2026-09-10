@@ -367,6 +367,22 @@ with project and pane provenance. Generated catch-up summaries are a later featu
 See [Phren Hook setup](../../docs/phren-hook.md) and
 [the connection protocol](AGENT_CONNECTIONS.md) for details and validation.
 
+## Running checks deliberately
+
+The iOS GitHub workflow is **manual only**. Pushes and pull requests do not launch
+macOS package tests, simulator builds, or native UI tests. From **Actions → iOS →
+Run workflow**, the default run checks PhrenKit/SSH, builds the app, and checks the
+web graph renderer. Enable **ui_tests** only when you explicitly want the full
+native UI suite too. It has a 10-minute step limit; the app job has a 20-minute
+limit, package tests have a 10-minute limit, and a new run cancels an older run
+on the same branch. Native test artifacts expire after three days.
+
+For normal development, run the affected Swift package tests and targeted
+simulator tests locally; record the checks with the change. Changes to shared
+markdown formats still require the CLI-generated fixture checks against
+PhrenKit. The regular cross-platform CI remains automatic, with 10-minute job
+limits and cancellation of superseded runs. Release workflows are already manual.
+
 ## Building
 
 Requirements: Xcode 26+ (Swift 6.2; deployment target iOS 17), [XcodeGen](https://github.com/yonaskolb/XcodeGen),
