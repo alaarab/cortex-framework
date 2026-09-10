@@ -43,12 +43,14 @@ throughout the app and terminal while preserving navigation and chat drafts.
 
 Herdr uses a single compact header for back, computer/status, and reconnect.
 The terminal starts directly below it; the keyboard stays hidden until requested.
+Swipe down on its shortcut row to dismiss the keyboard.
 
 Chat uses compact tool activity and a full-width composer. Its smaller Send
 control becomes Stop while an agent works and the draft is empty; typing a new
 message brings Send back so you can steer the agent. **Switch agent**, beside
 Terminal, opens conversations across saved computers and agents within the
-current tab. Each conversation keeps its own draft.
+current tab. Each conversation keeps its own draft. Swipe down on the message
+box or its icon row to dismiss the keyboard without sending or losing your draft.
 
 **Memory maintenance**, available from Projects and Settings, is optional. Its
 overview groups candidates, stale memories, and conflicts by project and store.

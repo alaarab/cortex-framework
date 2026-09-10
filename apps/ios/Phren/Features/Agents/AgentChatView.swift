@@ -517,6 +517,8 @@ struct AgentChatView: View {
                     .lineLimit(1...4).focused($composing).font(.system(size: composerTextSize, design: .monospaced))
                     .tint(PhrenTheme.cyan).padding(.vertical, 8).padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .dismissKeyboardOnDownwardDrag { composing = false }
                     .accessibilityIdentifier("chat-composer").disabled(model.target == nil)
                 HStack(alignment: .bottom, spacing: 4) {
                     Button { showingAttachments = true } label: {
@@ -570,6 +572,8 @@ struct AgentChatView: View {
                     .keyboardShortcut(.return, modifiers: .command)
                 }
                 .padding(.horizontal, 6).padding(.bottom, 4)
+                .contentShape(Rectangle())
+                .dismissKeyboardOnDownwardDrag { composing = false }
             }
             .padding(.top, 2)
             .background(PhrenTheme.chatPanel, in: RoundedRectangle(cornerRadius: 22))

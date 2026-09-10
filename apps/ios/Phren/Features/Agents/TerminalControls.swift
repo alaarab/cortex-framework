@@ -52,6 +52,8 @@ struct TerminalControls: View {
         .padding(.horizontal, 5).padding(.vertical, 2)
         .background(PhrenTheme.chatPanel, in: Capsule())
         .overlay { Capsule().strokeBorder(PhrenTheme.borderStrong, lineWidth: 0.5) }
+        .contentShape(Capsule())
+        .dismissKeyboardOnDownwardDrag { _ = terminal.resignFirstResponder() }
         .padding(.horizontal, 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal-toolbar")

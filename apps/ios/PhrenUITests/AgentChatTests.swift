@@ -2,6 +2,34 @@ import XCTest
 
 final class AgentChatTests: XCTestCase {
     @MainActor
+    func testDownwardDragOnComposerAndIconsDismissesKeyboardWithoutSending() {
+        let app = launch()
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 8))
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        let draft = "Keep my draft while I swipe"
+        composer.tap(); composer.typeText(draft)
+        let horizontalStart = composer.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+        horizontalStart.press(forDuration: 0.05, thenDragTo: horizontalStart.withOffset(CGVector(dx: 100, dy: 0)))
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "A horizontal editing gesture must not dismiss the keyboard")
+
+        for surface in [composer, app.buttons["chat-composer-terminal"], app.buttons["chat-send"]] {
+            composer.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 8, dy: 110)))
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+            XCTAssertEqual(composer.value as? String, draft)
+            XCTAssertTrue(app.buttons["chat-close"].isHittable, "Swiping a terminal icon must not open it")
+            XCTAssertFalse(app.staticTexts["Received in codex on w7:p1: \(draft)"].exists, "Swiping Send must not send")
+        }
+        capture(app, "Keyboard dismissed by dragging the message box or icons")
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.staticTexts["Received in codex on w7:p1: \(draft)"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
     func testOpeningSpinnerIsCenteredInTheConversation() {
         let app = launch(extra: ["--chat-opening-slow"])
         app.buttons["live-chat:w7:w7:t9"].tap()

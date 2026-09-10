@@ -1,6 +1,19 @@
 import SwiftUI
 import PhrenKit
 
+extension View {
+    /// A thumb drag dismisses the keyboard without consuming taps or horizontal
+    /// text/toolbar gestures. Global coordinates stay stable as the keyboard moves.
+    func dismissKeyboardOnDownwardDrag(_ dismiss: @escaping () -> Void) -> some View {
+        // The icon row sits against the keyboard: recognize within its lower
+        // half, before the finger crosses into the keyboard's separate window.
+        simultaneousGesture(DragGesture(minimumDistance: 8, coordinateSpace: .global).onChanged { value in
+            let drag = value.translation
+            if drag.height > 12 && drag.height > abs(drag.width) * 1.3 { dismiss() }
+        })
+    }
+}
+
 /// "live · updated 3s ago" freshness indicator shown on every list screen —
 /// the visible promise that what you see is what's on GitHub right now.
 struct LiveStatusBar: View {
