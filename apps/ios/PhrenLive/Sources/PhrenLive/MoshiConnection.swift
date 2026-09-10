@@ -35,9 +35,11 @@ public enum LiveConnectionError: LocalizedError, Equatable {
 public enum MoshiConnection {
     public static func fetch(host: LiveHost, privateKey: Data) async throws -> MoshiWorkspaces {
         try host.validate()
+        async let copilot = try? copilotDiscovery(host: host, key: privateKey)
         let data = try await fetchData(host: host, key: Curve25519.Signing.PrivateKey(rawRepresentation: privateKey))
         try Task.checkCancellation()
-        return try MoshiWorkspaces.read(data)
+        _ = try MoshiWorkspaces.read(data)
+        return try MoshiWorkspaces.read(CopilotDiscovery.mergeWorkspaces(data, copilot: await copilot))
     }
 
     static func fetchData(host: LiveHost, key: Curve25519.Signing.PrivateKey, request: GatewayRequest = .workspaces,
@@ -49,7 +51,7 @@ public enum MoshiConnection {
         let exchange = Exchange(result: result)
         exchange.onFrame = receive
         // All Exchange access is confined to this event loop, including cancel.
-        let deadline = loop.scheduleTask(in: .seconds(request.body == nil ? 20 : 60)) { exchange.finish(.failure(LiveConnectionError.timeout)) }
+        let deadline = loop.scheduleTask(in: .seconds(Int64(request.timeoutSeconds ?? (request.body == nil ? 20 : 60)))) { exchange.finish(.failure(LiveConnectionError.timeout)) }
         if receive != nil { exchange.onFirstFrame = { deadline.cancel() } }
         result.futureResult.whenComplete { _ in
             deadline.cancel()

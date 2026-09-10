@@ -13,13 +13,16 @@ public struct AgentChatTarget: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { [hostID.uuidString, muxID, workspaceID, tabID, paneID, source, sessionID].joined(separator: "/") }
 
     public init(hostID: UUID, workspaceID: String, tabID: String, paneID: String, source: String, sessionID: String, muxID: String = "herdr:default") throws {
-        guard [workspaceID, tabID, paneID, sessionID, muxID].allSatisfy(Self.validID), muxID.hasPrefix("herdr:"), ["codex", "claude"].contains(source) else {
-            throw PhrenKitError.validation("Native chat needs a recognized Codex or Claude Code conversation in this pane.")
+        guard [workspaceID, tabID, paneID, sessionID, muxID].allSatisfy(Self.validID), muxID.hasPrefix("herdr:"), ["codex", "claude", "copilot"].contains(source),
+              source != "copilot" || UUID(uuidString: sessionID) != nil else {
+            throw PhrenKitError.validation("Native chat needs a recognized Codex, Claude Code, or GitHub Copilot conversation in this pane.")
         }
         self.hostID = hostID; self.workspaceID = workspaceID; self.tabID = tabID
         self.paneID = paneID; self.source = source; self.sessionID = sessionID
         self.muxID = muxID
     }
+
+    public var providerName: String { source == "claude" ? "Claude" : source == "copilot" ? "Copilot" : "Codex" }
 
     public static func validID(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 200
@@ -95,7 +98,7 @@ public struct AgentChatTranscript: Equatable, Sendable {
     public var progressEvents: [AgentChatProgressEvent] = []
 
     public static func read(_ data: Data, source: String) throws -> Self {
-        guard ["codex", "claude"].contains(source), data.count <= 8_388_608,
+        guard ["codex", "claude", "copilot"].contains(source), data.count <= 8_388_608,
               let frame = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let kind = Kind(rawValue: frame["type"] as? String ?? ""), frame["source"] as? String == source,
               frame["entries"] == nil || frame["entries"] is [[String: Any]] else {
@@ -112,7 +115,7 @@ public struct AgentChatTranscript: Equatable, Sendable {
             guard let line = entry["line"] as? Int, line >= 0, let raw = entry["raw"] as? [String: Any] else { continue }
             questionEvents += AgentQuestionEvent.read(raw, source: source)
             if let event = AgentChatProgressEvent.read(raw, source: source, line: line) { progressEvents.append(event) }
-            let parts = source == "codex" ? codex(raw) : claude(raw)
+            let parts = source == "codex" ? codex(raw) : source == "copilot" ? copilot(raw) : claude(raw)
             for (index, part) in parts.enumerated() {
                 let id = "\(line):\(index)"
                 guard !part.text.isEmpty, seen.insert(id).inserted else { continue }
@@ -157,6 +160,21 @@ public struct AgentChatTranscript: Equatable, Sendable {
             return [Part(role: .tool, title: payload["name"] as? String ?? "Tool", text: readable(payload["arguments"] ?? payload["input"]))]
         case "function_call_output", "custom_tool_call_output":
             return [Part(role: .tool, title: "Tool result", text: readable(payload["output"]))]
+        default: return []
+        }
+    }
+    private static func copilot(_ raw: [String: Any]) -> [Part] {
+        guard raw["agentId"] == nil, raw["ephemeral"] as? Bool != true,
+              let data = raw["data"] as? [String: Any] else { return [] }
+        switch raw["type"] as? String {
+        case "user.message":
+            guard data["source"] == nil || data["source"] as? String == "user" else { return [] }
+            return [Part(role: .user, text: text(data["content"]))]
+        case "assistant.message": return [Part(role: .assistant, text: text(data["content"]))]
+        case "tool.execution_start": return [Part(role: .tool, title: data["toolName"] as? String ?? "Tool", text: readable(data["arguments"]))]
+        case "tool.execution_complete":
+            let result = data["result"] as? [String: Any], error = data["error"] as? [String: Any]
+            return [Part(role: .tool, title: "Tool result", text: text(result?["content"]) + text(error?["message"]))]
         default: return []
         }
     }

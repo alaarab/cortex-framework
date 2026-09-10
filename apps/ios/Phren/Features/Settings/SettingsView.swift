@@ -75,7 +75,7 @@ struct SettingsView: View {
                         Text("Moshi").tag(true)
                     }.accessibilityIdentifier("agent-chat-preference")
                 } header: { Text("Agent conversations") } footer: {
-                    Text("Phren chats with your existing Codex and Claude Code sessions. Herdr terminals and workspace controls are built into Phren. Moshi is optional.")
+                    Text("Phren chats with your existing Codex, Claude Code, and GitHub Copilot sessions. Herdr terminals and workspace controls are built into Phren. Moshi is optional.")
                 }
 
                 Section("Account") {

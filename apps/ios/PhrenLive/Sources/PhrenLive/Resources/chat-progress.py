@@ -12,6 +12,15 @@ import shlex
 import sys
 import uuid
 
+# Preserve the counters-only command and explicitly dispatch the Copilot
+# adapter. SSH_ORIGINAL_COMMAND is parsed as data, never executed as a shell.
+original = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "")) if not sys.argv[1:] else []
+if len(original) == 2 and original[0] == "phren-copilot-chat":
+    import runpy
+    bridge = runpy.run_path(str(Path(__file__).with_name("copilot-chat.py")))
+    bridge["main"](original[1])
+    raise SystemExit(0)
+
 args = sys.argv[1:]
 if not args:
     # authorized_keys invokes this fixed reader, never the requested shell text.

@@ -18,6 +18,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
     private var fixtureSwitchPressed = false
     private var fixtureMouseInput = ""
     #endif
+    private var commandMenuOpened = false
     private var socket: HerdrTerminalSocket?
     private var writes: Task<Void, Never>?
     private var generation = UUID()
@@ -39,7 +40,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
         terminal.selectionHandleColor = UIColor(PhrenTheme.lavender)
         terminal.accessibilityIdentifier = "herdr-terminal"
     }
-    func run(host: LiveHost, session: DiscoveredMoshiSession?, target: AgentChatTarget?, paneID: String?) async {
+    func run(host: LiveHost, session: DiscoveredMoshiSession?, target: AgentChatTarget?, paneID: String?, commandMenu: Bool = false) async {
         let run = UUID(); generation = run
         let socket = HerdrTerminalSocket(); self.socket = socket
         connected = false; error = nil
@@ -71,6 +72,7 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
                 }
                 terminal.feed(text: "\u{1B}[2 q") // Steady cursor keeps UI automation idle.
                 connected = true
+                if commandMenu && !commandMenuOpened { commandMenuOpened = true; input("/") }
                 while !Task.isCancelled {
                     let report: [String: Any] = ["input": fixtureInput,
                         "selected": terminal.selection.getSelectedText(),
@@ -89,9 +91,11 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
             }
             #endif
             let key = try DeviceSSHKey.load(host.id)
+            var canOpenCommands = false
             if let target {
                 guard target.hostID == host.id, target.muxID == host.muxID else { throw PhrenKitError.validation("Reopen this terminal from the current computer.") }
-                _ = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: target.workspaceID, tabID: target.tabID).validate(target)
+                let pane = try await MoshiConnection.chatPanes(host: host, privateKey: key, workspaceID: target.workspaceID, tabID: target.tabID).validate(target)
+                canOpenCommands = ["idle", "done"].contains(pane.agentStatus ?? "")
                 try await MoshiConnection.herdrAction(host: host, privateKey: key, operation: .focus,
                                                      workspaceID: target.workspaceID, tabID: target.tabID, paneID: target.paneID)
             } else if let session {
@@ -109,6 +113,11 @@ private final class HerdrTerminalModel: NSObject, @preconcurrency TerminalViewDe
                 try Task.checkCancellation()
                 guard generation == run else { return }
                 terminal.feed(byteArray: ArraySlice(bytes)); connected = true
+                if commandMenu && !commandMenuOpened {
+                    commandMenuOpened = true
+                    if canOpenCommands { try await socket.input("/") }
+                    // A working agent or an approval keeps its input untouched.
+                }
                 try await socket.acknowledge(bytes.count)
                 if !resized {
                     resized = true
@@ -210,6 +219,7 @@ struct HerdrTerminalView: View {
     var session: DiscoveredMoshiSession? = nil
     var target: AgentChatTarget? = nil
     var paneID: String? = nil
+    var commandMenu = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
     @State private var model = HerdrTerminalModel()
@@ -287,7 +297,7 @@ struct HerdrTerminalView: View {
         }
         .onAppear { visible = true }.onDisappear { visible = false }
         .task(id: Run(active: active, reconnect: reconnect)) {
-            if active { await model.run(host: host, session: session, target: target, paneID: paneID) }
+            if active { await model.run(host: host, session: session, target: target, paneID: paneID, commandMenu: commandMenu) }
         }
     }
     private func key(_ title: String, _ sequence: String) -> some View {

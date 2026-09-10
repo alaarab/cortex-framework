@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the counters-only SSH reader and upgrade existing Phren device keys."""
+"""Install the SSH chat readers/Copilot bridge and upgrade Phren device keys."""
 import argparse
 import os
 from pathlib import Path
@@ -46,8 +46,11 @@ def main():
     args = parser.parse_args()
     reader = args.reader.read_bytes()
     compile(reader, "chat-progress.py", "exec")
+    copilot = args.reader.with_name("copilot-chat.py").read_bytes()
+    compile(copilot, "copilot-chat.py", "exec")
     target = Path.home() / ".local/share/phren/chat-progress.py"
     target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(target.with_name("copilot-chat.py"), copilot, 0o700)
     atomic_write(target, reader, 0o700)
     path = Path.home() / ".ssh/authorized_keys"
     count = 0
@@ -59,7 +62,7 @@ def main():
             if path.read_text() != before:
                 raise RuntimeError("authorized_keys changed; retry the update")
             atomic_write(path, after.encode(), path.stat().st_mode & 0o777)
-    print(f"Installed the chat progress reader; updated {count} Phren iPhone key(s).")
+    print(f"Installed the chat progress reader and Copilot bridge; updated {count} Phren iPhone key(s).")
 
 
 if __name__ == "__main__":

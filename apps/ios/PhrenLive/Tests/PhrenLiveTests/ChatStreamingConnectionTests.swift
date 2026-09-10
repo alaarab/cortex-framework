@@ -67,13 +67,15 @@ final class ChatProgressFixtureProcess: ChannelInboundHandler {
     private var output: Pipe?
     init(command: String) { self.command = command }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        guard let request = event as? SSHChannelRequestEvent.ExecRequest, request.command == command, process == nil else {
+        guard let request = event as? SSHChannelRequestEvent.ExecRequest,
+              request.command == command || (command == "phren-copilot-chat" && request.command.hasPrefix("phren-copilot-chat ")),
+              process == nil else {
             context.fireUserInboundEventTriggered(event); return
         }
         let process = Process(), pipe = Pipe(), channel = context.channel
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", "-u", MoshiConnection.progressReaderURL.path]
-        process.environment = ProcessInfo.processInfo.environment.merging(["SSH_ORIGINAL_COMMAND": command]) { _, new in new }
+        process.environment = ProcessInfo.processInfo.environment.merging(["SSH_ORIGINAL_COMMAND": request.command]) { _, new in new }
         process.standardInput = Pipe(); process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
         self.process = process; output = pipe
         pipe.fileHandleForReading.readabilityHandler = { handle in

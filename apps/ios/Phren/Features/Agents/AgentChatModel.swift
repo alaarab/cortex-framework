@@ -130,6 +130,7 @@ final class AgentChatModel {
                 }
                 if let target {
                     needsAnswer = try list.validate(target).needsAnswer || approval != nil
+                    if target.source == "copilot" { liveActivity = try list.validate(target).agentStatus }
                     if needsAnswer { awaitingReply = false }
                     if streamTarget != target { beginStream(session, target: target, run: run) }
                 }
@@ -197,6 +198,7 @@ final class AgentChatModel {
 
     private func beginProgress(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
         progressTask?.cancel(); progressConnected = false; progressUnavailable = false
+        guard target.source != "copilot" else { return }
         progressTask = Task {
             #if DEBUG && targetEnvironment(simulator)
             if AgentChatFixture.enabled { return }
@@ -220,6 +222,7 @@ final class AgentChatModel {
 
     private func beginStatus(_ session: DiscoveredMoshiSession, target: AgentChatTarget, run: UUID) {
         statusTask?.cancel(); interactionConnected = false; approval = nil
+        guard target.source != "copilot" else { return }
         let statusRun = UUID(); statusGeneration = statusRun
         statusTask = Task {
             while !Task.isCancelled {
@@ -311,6 +314,9 @@ final class AgentChatModel {
     func send(_ session: DiscoveredMoshiSession) async {
         guard !sending, connected, !needsAnswer, let target,
               !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
+        guard !AgentSlashCommand.isCommand(draft) || attachments.isEmpty else {
+            deliveryError = "Remove attachments before running a slash command."; return
+        }
         let submitted = draft, submittedIDs = Set(attachments.map(\.id))
         var sent = attachments
         sending = true; deliveryError = nil
@@ -346,6 +352,7 @@ final class AgentChatModel {
             try await MoshiConnection.sendChat(host: session.host, privateKey: DeviceSSHKey.load(session.host.id), target: target, text: text)
             #endif
             if draft == submitted { draft = "" }
+            if AgentSlashCommand.isCommand(submitted) { awaitingReply = false; sentAt = nil }
             // Keep small local previews, not full uploaded files, in the conversation.
             sentImages += sent.filter { $0.attachment.isImage }.compactMap { item in
                 ChatAttachmentPreparation.preview(item.attachment).map { ChatAttachmentDraft(attachment: $0, path: item.path) }

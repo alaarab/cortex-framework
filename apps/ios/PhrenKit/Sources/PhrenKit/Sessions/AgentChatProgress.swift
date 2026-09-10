@@ -45,6 +45,19 @@ public struct AgentChatProgressEvent: Equatable, Sendable {
            let message = raw["message"] as? [String: Any], message["role"] as? String == "assistant" {
             return AgentTokenUsage.read(message["usage"] as? [String: Any]).map { .init(line: line, value: .usage($0)) }
         }
+        if source == "copilot", raw["agentId"] == nil, let data = raw["data"] as? [String: Any] {
+            switch raw["type"] as? String {
+            case "assistant.turn_start": return .init(line: line, value: .started(date(nil, fallback: raw["timestamp"])))
+            case "session.idle": return .init(line: line, value: data["aborted"] as? Bool == true ? .stopped : .finished(date(nil, fallback: raw["timestamp"])))
+            case "abort": return .init(line: line, value: .stopped)
+            case "assistant.usage":
+                var counts: [String: Any] = [:]
+                counts["input_tokens"] = data["inputTokens"]; counts["output_tokens"] = data["outputTokens"]
+                counts["cached_input_tokens"] = data["cacheReadTokens"]
+                return AgentTokenUsage.read(counts).map { .init(line: line, value: .usage($0)) }
+            default: break
+            }
+        }
         return nil
     }
     private static func date(_ value: Any?, fallback: Any?) -> Date? {

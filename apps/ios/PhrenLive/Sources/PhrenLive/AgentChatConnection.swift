@@ -11,7 +11,9 @@ extension MoshiConnection {
             let worker = Task {
                 do {
                     guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
-                    _ = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .transcript(target, streaming: true)) { data in
+                    let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "watch") : .transcript(target, streaming: true)
+                    _ = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request) { data in
+                        if target.source == "copilot" { try checkCopilotResponse(data) }
                         let frame = try AgentChatTranscript.read(data, source: target.source)
                         if case .dropped = continuation.yield(frame) { throw LiveConnectionError.oversized }
                     }
@@ -24,7 +26,9 @@ extension MoshiConnection {
 
     public static func chatHistory(host: LiveHost, privateKey: Data, target: AgentChatTarget, beforeLine: Int) async throws -> AgentChatTranscript {
         guard target.hostID == host.id && target.muxID == host.muxID, beforeLine > 0 else { throw PhrenKitError.validation("This history has no earlier destination.") }
-        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .transcript(target, beforeLine: beforeLine))
+        let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "history", before: beforeLine) : .transcript(target, beforeLine: beforeLine)
+        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
+        if target.source == "copilot" { try checkCopilotResponse(data) }
         let result = try AgentChatTranscript.read(data, source: target.source)
         guard result.kind == .older, result.messages.allSatisfy({ $0.line < beforeLine }) else {
             throw PhrenKitError.validation("The computer returned a different history range.")
@@ -44,7 +48,9 @@ extension MoshiConnection {
         guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
         let pane = try await chatPanes(host: host, privateKey: privateKey, workspaceID: target.workspaceID, tabID: target.tabID).validate(target, sending: true)
         guard pane.agentStatus == "working" else { throw PhrenKitError.validation("This agent is no longer working.") }
-        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .stop(target))
+        let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "stop") : .stop(target)
+        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
+        if target.source == "copilot" { try checkCopilotResponse(data) }
         guard (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["ok"] as? Bool == true else {
             throw PhrenKitError.validation("The stop request was not confirmed. Check the terminal.")
         }
@@ -54,14 +60,21 @@ extension MoshiConnection {
             throw PhrenKitError.validation("This workspace has no usable chat destination.")
         }
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .panes(workspaceID, tabID))
-        return try AgentChatPanes.read(data, workspaceID: workspaceID, tabID: tabID)
+        // Validate the helper's location before consulting the Copilot bridge.
+        _ = try AgentChatPanes.read(data, workspaceID: workspaceID, tabID: tabID)
+        // An older host without the bridge must not hide its other agents.
+        let resolved = (try? await copilotPaneIdentities(data, host: host, key: privateKey, workspace: workspaceID, tab: tabID)) ?? data
+        return try AgentChatPanes.read(resolved, workspaceID: workspaceID, tabID: tabID)
     }
 
     /// A bounded recent-history snapshot from the hook's WebSocket, then close.
     /// One-shot callers can use this without subscribing to live updates.
     public static func chatTranscript(host: LiveHost, privateKey: Data, target: AgentChatTarget) async throws -> AgentChatTranscript {
         guard target.hostID == host.id && target.muxID == host.muxID else { throw PhrenKitError.validation("The chat belongs to another computer.") }
-        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: .transcript(target))
+        var request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "watch") : .transcript(target)
+        request.streaming = false
+        let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
+        if target.source == "copilot" { try checkCopilotResponse(data) }
         return try AgentChatTranscript.read(data, source: target.source)
     }
 
@@ -74,9 +87,10 @@ extension MoshiConnection {
         let panes = try await chatPanes(host: host, privateKey: privateKey, workspaceID: target.workspaceID, tabID: target.tabID)
         _ = try panes.validate(target, sending: true)
         try Task.checkCancellation()
-        let request = try GatewayRequest.prompt(target, text: text)
+        let request = try target.source == "copilot" ? GatewayRequest.copilot(target, action: "send", text: text) : GatewayRequest.prompt(target, text: text)
         // Exactly one attempt. An interrupted reply must not replay terminal input.
         let data = try await fetchData(host: host, key: .init(rawRepresentation: privateKey), request: request)
+        if target.source == "copilot" { try checkCopilotResponse(data) }
         guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any], result["ok"] as? Bool == true else {
             throw PhrenKitError.validation("Delivery was not confirmed. Check the conversation before sending again.")
         }
@@ -93,6 +107,7 @@ struct GatewayRequest: Sendable {
     var initialMessages: [Data] = []
     var terminalSocket: HerdrTerminalSocket?
     var progressCommand: String?
+    var timeoutSeconds: Int?
     static let workspaces = Self(path: "/v1/workspaces")
     static func panes(_ workspace: String, _ tab: String) -> Self {
         Self(path: path("/v1/workspaces/panes", ["groupId": workspace, "childId": tab]))

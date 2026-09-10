@@ -3,6 +3,8 @@ import SwiftUI
 /// Native Markdown paragraphs and fenced code; no remote web content is loaded.
 struct ChatRichText: View {
     let text: String
+    @ScaledMetric(relativeTo: .body) private var textSize = 14.0
+    @ScaledMetric(relativeTo: .headline) private var headingSize = 15.0
     private struct Block: Identifiable {
         let id: Int
         let text: String
@@ -40,14 +42,14 @@ struct ChatRichText: View {
                                 .font(.caption).labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 32)
                         }.foregroundStyle(PhrenTheme.textMuted)
                         ScrollView(.horizontal) {
-                            Text(block.text).font(.callout.monospaced()).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
+                            Text(block.text).font(.system(size: textSize, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
                         }
                     }.padding(12).background(PhrenTheme.chatPanel, in: RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(PhrenTheme.border, lineWidth: 1))
                 } else {
                     Text((try? AttributedString(markdown: block.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block.text))
-                        .font(block.heading ? .system(.headline, design: .monospaced) : .system(.callout, design: .monospaced))
-                        .lineSpacing(4).textSelection(.enabled).tint(PhrenTheme.cyan)
+                        .font(.system(size: block.heading ? headingSize : textSize, weight: block.heading ? .semibold : .regular, design: .monospaced))
+                        .lineSpacing(3).textSelection(.enabled).tint(PhrenTheme.cyan)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

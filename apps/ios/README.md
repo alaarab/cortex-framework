@@ -261,7 +261,7 @@ Schema 1 and 2 queues upgrade while retaining all existing operations.
 
 ### Native agent chat
 
-Tap a live agent card to read and reply to its existing Codex or Claude Code
+Tap a live agent card to read and reply to its existing Codex, Claude Code, or GitHub Copilot CLI
 conversation inside Phren. **Project session → Chat with agent** and the graph's
 **Session → Chat with agent** discover the project's running sessions too. If a
 tab contains several supported agents, choose its pane before chatting.
@@ -277,7 +277,10 @@ Assistant replies use an open reading surface; consecutive tool calls and result
 collapse into one activity row with a command preview and operation count. Expand
 it to read or copy the full details. The composer keeps text, attachments, project
 context, dictation, send/stop, and progress together. It opens the keyboard only
-when you select the text field.
+when you select the text field. The 14-point monospace text scales with Dynamic
+Type. The compact input bar sits at the bottom; tap the conversation or drag it
+to dismiss the keyboard without losing your draft. Links and tool controls remain
+tappable.
 
 The plus button attaches photos, camera images, files, or a pasted image. Preview
 and remove attachments before sending. Up to four files (8 MB each) upload over
@@ -437,6 +440,58 @@ credentials. **Connection settings → Forget computer** removes it and the
 local directory mappings; remove the public authorization line on the host to
 revoke access there too.
 
+### Slash commands
+
+Type `/` in the chat composer for common command suggestions, or choose **Chat
+options → Slash commands** to open the running agent's complete menu in Phren's
+Herdr terminal. The full menu comes from the agent on that computer, including
+its installed skills, plugins, aliases, and version-specific commands. It inserts
+`/` once, without Enter, when the chosen agent is idle; it leaves working agents
+and approval prompts untouched. The terminal keyboard remains closed until its
+keyboard button is tapped.
+
+Send any slash command and arguments unchanged from chat, including commands not
+in the suggestions. Phren opens the same pane's terminal for interactive menus
+and command output. Returning resolves its current conversation again, so `/new`,
+`/clear`, or `/resume` cannot keep chat bound to the old session. Commands cannot
+be combined with file attachments. Unconfirmed sends keep their draft and are
+never retried automatically.
+
+### GitHub Copilot CLI
+
+On the computer running [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli),
+install Herdr's session integration and Phren's bridge as the SSH user:
+
+```sh
+herdr integration install copilot
+python3 apps/ios/scripts/enable-chat-progress.py
+```
+
+Start or restart Copilot inside Herdr after installing its integration. Sign in to
+Copilot on that computer if needed. Phren uses the session ID reported by Herdr,
+not the newest log or a second resumed Copilot process. The existing Moshi helper
+is still used for terminal transport, uploads, and workspace browsing; Moshi on
+the phone remains optional. Helper 0.3.19 omits Copilot metadata and transcripts,
+so Phren supplements discovery directly from Herdr through the SSH bridge.
+
+Native Copilot chat reads visible user/assistant messages, tool activity, and
+recorded lifecycle/usage events from `~/.copilot/session-state/<id>/events.jsonl`
+(or `COPILOT_HOME` set for SSH). It excludes reasoning, transformed prompts,
+binary payloads, and subagent content. New records are read every 250 ms while
+chat is open. Copilot's on-disk log may publish complete messages rather than
+individual token deltas; the app reveals new messages progressively, but cannot
+show content before Copilot records it. Usage appears only when present in the
+log. Copilot approvals and questions are answered in the native Herdr terminal.
+Historical Copilot binary attachments are not rendered; new uploads still use
+the existing attachment flow and deliver their paths to the agent.
+
+The bridge checks the exact server, workspace, tab, pane, provider, and session
+before input. Herdr independently rejects a replaced foreground process. Only
+explicit send and stop operations can write agent input; there is no arbitrary
+shell execution, session startup, or automatic retry. Hosts without the bridge
+keep their existing agent/terminal access. Discovery has a separate three-second
+deadline and does not turn a missing Copilot bridge into a lost connection.
+
 ### Live token counts
 
 Run once from a Phren checkout, as the SSH user on each computer:
@@ -445,11 +500,13 @@ Run once from a Phren checkout, as the SSH user on each computer:
 python3 apps/ios/scripts/enable-chat-progress.py
 ```
 
-This installs `~/.local/share/phren/chat-progress.py` and upgrades existing
+This installs `~/.local/share/phren/chat-progress.py` and `copilot-chat.py`, and upgrades existing
 Phren-labelled device keys, backing up `authorized_keys`. It retains the loopback
 forwarding restrictions and replaces the deny-all command with a fixed reader
-that accepts only `phren-chat-progress <codex|claude> <session UUID>`. It rejects
-shell commands and reads only that conversation's counters and lifecycle records.
+that accepts `phren-chat-progress <codex|claude> <session UUID>` for counters,
+and a bounded `phren-copilot-chat` request for the Copilot operations above. It
+rejects arbitrary shell commands. The progress command reads only the requested
+conversation's counters and lifecycle records.
 Python 3 and standard Codex/Claude transcript directories (or `CODEX_HOME` /
 `CLAUDE_CONFIG_DIR` available to SSH) are required. No daemon or agent restart.
 

@@ -2,6 +2,85 @@ import XCTest
 
 final class AgentChatTests: XCTestCase {
     @MainActor
+    func testTranscriptLinkStillOpensWhileKeyboardIsVisible() {
+        let app = launch(extra: ["--chat-link", "--capture-moshi-links"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap(); composer.typeText("Keep my draft")
+        let link = app.links["Open linked page"]
+        XCTAssertTrue(link.waitForExistence(timeout: 5))
+        link.tap()
+        app.buttons["chat-close"].tap()
+        let captured = app.staticTexts["moshi-opened-url"]
+        XCTAssertTrue(captured.waitForExistence(timeout: 5))
+        XCTAssertEqual(captured.label, "moshi://fixture-link")
+    }
+
+    @MainActor
+    func testCompactBottomComposerAndTapToDismissKeyboard() {
+        let app = launch(extra: ["--chat-markdown"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        XCTAssertLessThan(composer.frame.height, 60)
+        XCTAssertGreaterThan(composer.frame.midY, app.frame.maxY - 90)
+        composer.tap(); composer.typeText("Keep this draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        capture(app, "Smaller chat text and bottom composer")
+        app.staticTexts["Ready to test."].tap()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertEqual(composer.value as? String, "Keep this draft")
+        XCTAssertGreaterThan(composer.frame.midY, app.frame.maxY - 90)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Copy code"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)], timeout: 5), .completed)
+        capture(app, "Chat keyboard dismissed without losing the draft")
+    }
+
+    @MainActor
+    func testCopilotChatAndCustomSlashCommandOpenExactTerminal() {
+        let app = launch(extra: ["--chat-copilot"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        XCTAssertTrue(app.staticTexts["Copilot is connected to this project. What would you like to change?"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Copilot"))
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        composer.tap(); composer.typeText("Check the layout")
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.staticTexts["Received in copilot on w7:p1: Check the layout"].waitForExistence(timeout: 8))
+        capture(app, "Native GitHub Copilot chat")
+        composer.tap(); composer.typeText("/my-plugin/review path.swift --strict")
+        XCTAssertTrue(app.buttons["chat-all-commands"].waitForExistence(timeout: 5))
+        app.buttons["chat-send"].tap()
+        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["Received in copilot on w7:p1: /my-plugin/review path.swift --strict"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor
+    func testSlashSuggestionsAndFullMenuPreserveDraftWithoutSubmitting() {
+        let app = launch()
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap(); composer.typeText("/mo")
+        app.buttons["chat-command:/model"].tap()
+        XCTAssertEqual(composer.value as? String, "/model ")
+        app.buttons["chat-all-commands"].tap()
+        XCTAssertTrue(app.navigationBars["Herdr terminal"].waitForExistence(timeout: 8))
+        let report = app.staticTexts["terminal-fixture-report"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let value = try? JSONSerialization.jsonObject(with: Data(report.label.utf8)) as? [String: Any]
+            return value?["input"] as? String == "/"
+        }, object: report)], timeout: 5), .completed)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertEqual(composer.value as? String, "/model ")
+    }
+
+    @MainActor
     func testCompactActivityAndDirectTerminalKeepConversationUsable() {
         let app = launch(extra: ["--chat-design"])
         app.buttons["live-chat:w7:w7:t9"].tap()

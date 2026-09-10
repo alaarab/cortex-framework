@@ -45,12 +45,14 @@ struct AgentChatView: View {
     @State private var visible = false
     @State private var refresh = UUID()
     @State private var showingContext = false
+    @State private var commandDestination: CommandDestination?
     @State private var showingAttachments = false
     @State private var showingDictation = false
     @State private var previewImage: ChatAttachmentDraft?
     @State private var historyTask: Task<Void, Never>?
     @State private var atBottom = true
     @State private var scrollHeight: CGFloat = 0
+    @ScaledMetric(relativeTo: .body) private var composerTextSize = 14.0
     @FocusState private var composing: Bool
 
     private var currentHost: LiveHost? {
@@ -82,10 +84,20 @@ struct AgentChatView: View {
                                         HStack { VStack(alignment: .leading) { Text(pane.displayTitle); Text(pane.agent ?? "").font(.caption) }; Spacer(); Image(systemName: "chevron.right") }
                                             .padding(16).phrenCard()
                                     }.buttonStyle(.plain).accessibilityIdentifier("chat-pane:\(pane.id)")
+                                } else {
+                                    NavigationLink {
+                                        HerdrTerminalView(host: session.host, session: session, paneID: pane.id).toolbar(.visible, for: .navigationBar)
+                                    } label: {
+                                        Label("\(pane.displayTitle) · Open terminal", systemImage: "terminal").font(.subheadline)
+                                    }
                                 }
                             }
-                            Text("Native chat supports Codex and Claude Code sessions recognized on this computer.")
+                            Text("Native chat supports Codex, Claude Code, and GitHub Copilot sessions recognized on this computer.")
                                 .font(.footnote).foregroundStyle(PhrenTheme.textMuted)
+                            if model.panes.contains(where: { $0.agent == "copilot" }) {
+                                Link("Set up Copilot chat", destination: URL(string: "https://github.com/alaarab/phren/blob/main/apps/ios/README.md#github-copilot-cli")!)
+                                    .font(.footnote)
+                            }
                         }
                         if let error = model.error { connectionIssue(error) }
                         if currentHost != session.host { connectionIssue("This computer's connection changed. Reopen chat from the current session list.") }
@@ -137,6 +149,8 @@ struct AgentChatView: View {
                     }
                     .padding(18)
                 }
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded { composing = false })
                 .scrollDismissesKeyboard(.interactively)
                 .defaultScrollAnchor(.bottom)
                 .coordinateSpace(name: "chat-scroll")
@@ -180,6 +194,17 @@ struct AgentChatView: View {
             while model.reveal.isRevealing && !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(33)) } catch { return }
                 model.reveal.advance()
+            }
+        }
+        .navigationDestination(item: $commandDestination) { destination in
+            HerdrTerminalView(host: session.host, session: session, target: destination.menu ? model.target : nil,
+                              paneID: destination.paneID, commandMenu: destination.menu)
+                .toolbar(.visible, for: .navigationBar)
+        }
+        .onChange(of: commandDestination) { previous, current in
+            if previous != nil && current == nil {
+                // Commands chosen in the live menu can replace the session too.
+                model.chooseAnother(); refresh = UUID()
             }
         }
         .sheet(isPresented: $showingAttachments) {
@@ -231,7 +256,7 @@ struct AgentChatView: View {
                     Text(selectedPane?.displayTitle ?? session.workspaceName)
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold)).lineLimit(1)
                 }
-                Text("\(session.host.name) · \(session.workspaceName) · \(model.target?.source == "claude" ? "Claude" : "Codex")")
+                Text("\(session.host.name) · \(session.workspaceName) · \(model.target?.providerName ?? "Agent")")
                     .font(.system(.caption2, design: .monospaced)).foregroundStyle(PhrenTheme.textMuted)
                     .lineLimit(1).accessibilityIdentifier("chat-location")
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -266,6 +291,8 @@ struct AgentChatView: View {
                 NavigationLink("Project skills") { SkillsView(project: project.name, storeId: project.storeID).toolbar(.visible, for: .navigationBar) }
                 NavigationLink("Explore graph") { GraphView(focusProject: project.name, initialStoreId: project.storeID).toolbar(.visible, for: .navigationBar) }
             }
+            Button("Slash commands", systemImage: "slash.circle") { openCommandMenu() }
+                .disabled(model.target == nil || model.sending)
             Button("Refresh conversation") { refresh = UUID() }
             Button("Dictate message", systemImage: "mic") { showingDictation = true }
                 .disabled(model.target == nil || model.sending)
@@ -333,6 +360,19 @@ struct AgentChatView: View {
                 }.accessibilityIdentifier("chat-attachments")
             }
 
+            if composing, AgentSlashCommand.isCommand(model.draft) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        Button("All commands", systemImage: "terminal") { openCommandMenu() }
+                            .accessibilityIdentifier("chat-all-commands")
+                        ForEach(AgentSlashCommand.suggestions(source: model.target?.source ?? "", draft: model.draft), id: \.self) { name in
+                            Button(name) { model.draft = name + " " }
+                                .accessibilityIdentifier("chat-command:" + name)
+                        }
+                    }.font(.system(size: 12, design: .monospaced))
+                        .buttonStyle(.plain).foregroundStyle(PhrenTheme.cyan).frame(height: 36)
+                }.scrollIndicators(.hidden)
+            }
             if let status = model.deliveryStatus { Text(status).font(.caption).foregroundStyle(PhrenTheme.cyan) }
             if active, model.target != nil, !model.connected, !model.loading {
                 HStack {
@@ -355,20 +395,15 @@ struct AgentChatView: View {
             }
             if let error = model.deliveryError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-delivery-error") }
             if let error = model.draftStorageError { Text(error).font(.caption).foregroundStyle(PhrenTheme.warning).accessibilityIdentifier("chat-draft-storage-error") }
-            TextField(model.target?.source == "claude" ? "Message Claude…" : "Message Codex…", text: $model.draft, axis: .vertical)
-                .lineLimit(1...6).focused($composing).font(.system(.callout, design: .monospaced))
-                .tint(PhrenTheme.cyan).padding(.horizontal, 4).frame(minHeight: 30)
-                .accessibilityIdentifier("chat-composer").disabled(model.target == nil)
-            HStack(spacing: 4) {
+            HStack(alignment: .bottom, spacing: 4) {
                 Button { showingAttachments = true } label: {
-                    Image(systemName: "plus").font(.system(size: 22, weight: .light)).frame(width: 40, height: 44).contentShape(Rectangle())
+                    Image(systemName: "plus").font(.system(size: 21, weight: .light)).frame(width: 36, height: 44).contentShape(Rectangle())
                 }.accessibilityLabel("Add attachment").disabled(model.target == nil || model.sending)
-                if project != nil {
-                    Button { showingContext = true } label: {
-                        Image(systemName: "brain").font(.system(size: 18)).frame(width: 40, height: 44).contentShape(Rectangle())
-                    }.accessibilityLabel("Insert project context").disabled(model.sending)
-                }
-                Spacer(minLength: 0)
+                TextField("Message \(model.target?.providerName ?? "agent")…", text: $model.draft, axis: .vertical)
+                    .lineLimit(1...5).focused($composing).font(.system(size: composerTextSize, design: .monospaced))
+                    .tint(PhrenTheme.cyan).padding(.vertical, 12).padding(.horizontal, 4)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("chat-composer").disabled(model.target == nil)
                 Button { showingDictation = true } label: {
                     Image(systemName: "mic").font(.system(size: 20)).frame(width: 40, height: 44).contentShape(Rectangle())
                 }.accessibilityLabel("Dictate message").disabled(model.target == nil || model.sending)
@@ -380,7 +415,19 @@ struct AgentChatView: View {
                 }
                 Button {
                     composing = false
-                    sendTask = Task { await model.send(session) }
+                    if model.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "/", model.attachments.isEmpty {
+                        openCommandMenu()
+                    } else {
+                        let isCommand = AgentSlashCommand.isCommand(model.draft), pane = model.target?.paneID
+                        sendTask = Task {
+                            await model.send(session)
+                            if isCommand, model.deliveryError == nil, let pane {
+                                commandDestination = .init(paneID: pane, menu: false)
+                                // /new, /clear and /resume may change the session ID.
+                                model.chooseAnother()
+                            }
+                        }
+                    }
                 } label: {
                     if model.sending { ProgressView().frame(width: 44, height: 44) }
                     else { Image(systemName: "arrow.up").font(.system(size: 22, weight: .semibold)).frame(width: 44, height: 44) }
@@ -394,11 +441,15 @@ struct AgentChatView: View {
             tokenUsage.padding(.horizontal, 4)
         }
         .buttonStyle(.plain).foregroundStyle(PhrenTheme.textSecondary)
-        .padding(12)
-        .background(PhrenTheme.chatPanel, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26).strokeBorder(PhrenTheme.borderStrong, lineWidth: 1))
-        .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 8)
-        .background(PhrenTheme.chatCanvas)
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+        .background(PhrenTheme.chatPanel.ignoresSafeArea(.container, edges: .bottom))
+        .overlay(alignment: .top) { PhrenTheme.border.frame(height: 1) }
+    }
+    private struct CommandDestination: Hashable { let paneID: String; let menu: Bool }
+    private func openCommandMenu() {
+        guard let target = model.target else { return }
+        composing = false
+        commandDestination = .init(paneID: target.paneID, menu: true)
     }
     private struct RunIdentity: Equatable { let active: Bool; let refresh: UUID }
     private var canSend: Bool {
