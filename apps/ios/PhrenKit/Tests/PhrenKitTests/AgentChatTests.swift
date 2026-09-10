@@ -149,6 +149,10 @@ final class AgentChatTests: XCTestCase {
             XCTAssertEqual(messages.map(\.toolCallID), ["c1", "c1"], source)
             XCTAssertEqual(messages.map(\.isToolResult), [false, true], source)
         }
+        let oversized = [["type": "response_item", "payload": ["type": "function_call_output", "output": "Result remains readable", "call_id": String(repeating: "x", count: 513)]]]
+        let message = try AgentChatTranscript.read(frame(oversized, source: "codex"), source: "codex").messages.first
+        XCTAssertEqual(message?.text, "Result remains readable")
+        XCTAssertNil(message?.toolCallID)
     }
 
     private func panes(status: String = "idle") throws -> AgentChatPanes {

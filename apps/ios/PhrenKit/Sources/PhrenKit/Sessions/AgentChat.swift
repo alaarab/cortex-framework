@@ -121,8 +121,9 @@ public struct AgentChatTranscript: Equatable, Sendable {
             for (index, part) in parts.enumerated() {
                 let id = "\(line):\(index)"
                 guard (!part.text.isEmpty || part.role == .tool), seen.insert(id).inserted else { continue }
+                let toolCallID = part.toolCallID.flatMap { !$0.isEmpty && $0.utf8.count <= 512 ? $0 : nil }
                 messages.append(.init(id: id, line: line, role: part.role, title: part.title,
-                                      text: String(part.text.prefix(64_000)), imageBlocks: part.imageBlocks, toolCallID: part.toolCallID))
+                                      text: String(part.text.prefix(64_000)), imageBlocks: part.imageBlocks, toolCallID: toolCallID))
             }
         }
         return Self(kind: kind, messages: messages.sorted { $0.line < $1.line }, hasMore: frame["hasMore"] as? Bool ?? false,
