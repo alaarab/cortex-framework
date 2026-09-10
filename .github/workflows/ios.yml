@@ -75,9 +75,13 @@ jobs:
         working-directory: apps/ios
         run: xcodegen generate
       - name: Build
+        # SwiftTerm 1.20.0 is pinned in project.yml. Its reviewed build plugin
+        # generates version metadata; fresh CI runners cannot show Xcode's
+        # approval dialog. Match the signed-device build's invocation.
         working-directory: apps/ios
         run: |
           xcodebuild build \
+            -skipPackagePluginValidation \
             -project Phren.xcodeproj \
             -scheme Phren \
             -destination 'generic/platform=iOS Simulator' \
@@ -94,6 +98,7 @@ jobs:
           xcrun simctl list devices available --json > "$RUNNER_TEMP/phren-devices.json"
           PHREN_TEST_DEVICE_ID=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(v["udid"] for devices in d["devices"].values() for v in devices if v["name"].startswith("iPhone")))' "$RUNNER_TEMP/phren-devices.json")
           xcodebuild test -project Phren.xcodeproj -scheme Phren \
+            -skipPackagePluginValidation \
             -destination "platform=iOS Simulator,id=$PHREN_TEST_DEVICE_ID" \
             -resultBundlePath "$RUNNER_TEMP/PhrenUITests.xcresult" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=PHRENTEST01
