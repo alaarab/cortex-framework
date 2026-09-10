@@ -129,6 +129,28 @@ final class AgentChatTests: XCTestCase {
         XCTAssertFalse(value.messages.contains { $0.text.contains("hidden") || $0.text.contains("metadata") })
     }
 
+    func testToolIDsAndEmptyResultsSurviveAllProviderParsers() throws {
+        let sources: [(String, [[String: Any]])] = [
+            ("codex", [
+                ["type": "response_item", "payload": ["type": "function_call", "name": "test", "arguments": "", "call_id": "c1"]],
+                ["type": "response_item", "payload": ["type": "function_call_output", "output": "", "call_id": "c1"]]
+            ]),
+            ("claude", [
+                ["message": ["role": "assistant", "content": [["type": "tool_use", "name": "test", "id": "c1", "input": [:]]]]],
+                ["message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "c1", "content": []]]]]
+            ]),
+            ("copilot", [
+                ["type": "tool.execution_start", "data": ["toolName": "test", "toolCallId": "c1", "arguments": [:]]],
+                ["type": "tool.execution_complete", "data": ["toolCallId": "c1", "result": ["content": ""]]]
+            ])
+        ]
+        for (source, rows) in sources {
+            let messages = try AgentChatTranscript.read(frame(rows, source: source), source: source).messages
+            XCTAssertEqual(messages.map(\.toolCallID), ["c1", "c1"], source)
+            XCTAssertEqual(messages.map(\.isToolResult), [false, true], source)
+        }
+    }
+
     private func panes(status: String = "idle") throws -> AgentChatPanes {
         let body: [String: Any] = ["kind": "herdr", "groupId": "w7", "childId": "w7:t1", "panes": [
             ["id": "w7:p1", "label": "1", "agent": "codex", "agentStatus": status, "sessionId": "session-one"],

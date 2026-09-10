@@ -75,13 +75,22 @@ import UIKit
         }
         if flag("--chat-design") {
             append("user", "Make the conversation easier to read. Keep the details close by.")
-            append("assistant", "I'll tighten the session header and collect tool activity into a single row. Replies will have more room to breathe.\n\n")
+            append("assistant", "I'll tighten the session header and give each tool call its own compact row. Replies will have more room to breathe.\n\n")
             for (command, output) in [("git diff --stat", "3 files changed, 42 insertions(+), 18 deletions(-)"), ("swift test --filter ChatTimelineTests", "All 4 timeline tests passed.")] {
                 let arguments = String(decoding: try JSONSerialization.data(withJSONObject: ["cmd": command]), as: UTF8.self)
                 entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call", "name": "exec_command", "arguments": arguments]]])
                 entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call_output", "output": output]]])
             }
-            append("assistant", "The conversation has a quieter layout now. Commands and results stay together; tap the Shell row to see everything.\n\nThe terminal is one tap away in the header, and your draft stays with this session when you come back.")
+            append("assistant", "The conversation has a quieter layout now. Commands and results stay together; expand one Shell row at a time.\n\nThe terminal is one tap away in the header, and your draft stays with this session when you come back.")
+        }
+        if flag("--chat-long-tools") {
+            for index in 0..<3 {
+                let id = "long-tool-\(index)"
+                let output = (0..<1_500).map { "Tool \(index) line \($0): build output" }.joined(separator: "\n") + "\nFinal output marker \(index)"
+                entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call", "call_id": id, "name": "exec_command", "arguments": "{\"cmd\":\"check-step-\(index)\"}"]]])
+                entries.append(["line": entries.count, "raw": ["type": "response_item", "payload": ["type": "function_call_output", "call_id": id, "output": output]]])
+            }
+            append("assistant", "Each command has its own output.")
         }
         if flag("--chat-diffs") {
             let patch = "*** Begin Patch\n*** Update File: Theme.swift\n@@\n-let action = green\n+let action = phrenPurple\n*** End Patch"

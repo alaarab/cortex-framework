@@ -137,7 +137,7 @@ final class AgentChatTests: XCTestCase {
         app.buttons["live-chat:w7:w7:t9"].tap()
         let group = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat-tool-group:")).firstMatch
         XCTAssertTrue(group.waitForExistence(timeout: 8))
-        XCTAssertEqual(group.label, "Shell, 2 operations")
+        XCTAssertEqual(group.label, "Shell, 1 operation")
         XCTAssertEqual(group.value as? String, "Collapsed")
         XCTAssertLessThanOrEqual(group.frame.height, 44, "The compact tool pill retains a larger accessible tap target")
         XCTAssertFalse(app.keyboards.firstMatch.exists)
@@ -148,8 +148,13 @@ final class AgentChatTests: XCTestCase {
         capture(app, "Custom chat with compact activity")
         group.tap()
         XCTAssertEqual(group.value as? String, "Expanded")
-        XCTAssertTrue(app.staticTexts["All 4 timeline tests passed."].exists)
+        XCTAssertFalse(app.staticTexts["All 4 timeline tests passed."].exists, "Another tool must stay collapsed")
         XCTAssertTrue(app.staticTexts["3 files changed, 42 insertions(+), 18 deletions(-)"].exists)
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat-tool-group:")).element(boundBy: 1)
+        XCTAssertEqual(second.value as? String, "Collapsed")
+        second.tap()
+        XCTAssertTrue(app.staticTexts["All 4 timeline tests passed."].exists)
+        second.tap()
         capture(app, "Expanded commands and results")
         group.tap()
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
@@ -298,6 +303,30 @@ final class AgentChatTests: XCTestCase {
         XCTAssertTrue(app.buttons["Preview Screenshot.png"].waitForExistence(timeout: 8))
         capture(app, "Draft restored after process relaunch")
     }
+    @MainActor
+    func testLongToolOutputStaysBoundedAndOpensSeparately() {
+        let app = launch(extra: ["--chat-long-tools"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat-tool-group:"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertEqual(rows.count, 3)
+        rows.firstMatch.tap()
+        let preview = app.staticTexts["chat-tool-preview:3:0"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(preview.frame.height, 110)
+        XCTAssertFalse(preview.label.contains("line 6:"))
+        XCTAssertEqual(rows.element(boundBy: 1).value as? String, "Collapsed")
+        XCTAssertEqual(rows.element(boundBy: 2).value as? String, "Collapsed")
+        capture(app, "Independent tool rows with six-line output preview")
+        app.buttons["chat-tool-output:3:0"].tap()
+        XCTAssertTrue(app.navigationBars["Tool Result"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Final output marker 0")).firstMatch.exists)
+        app.buttons["chat-tool-output-done"].tap()
+        rows.firstMatch.tap()
+        XCTAssertEqual(rows.firstMatch.value as? String, "Collapsed")
+        XCTAssertTrue(app.buttons["chat-close"].isHittable)
+    }
+
     @MainActor
     func testToolPatchShowsChangesAndUnwrapsResult() {
         let app = launch(extra: ["--chat-diffs"])

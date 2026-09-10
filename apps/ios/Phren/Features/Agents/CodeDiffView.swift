@@ -4,6 +4,7 @@ import SwiftUI
 /// independent of the user's action-button theme.
 struct CodeDiffView: View {
     let patch: String
+    var previewLineLimit = 36
     @State private var showAll = false
     private var preview: DiffPreview { DiffPreview(patch) }
     var body: some View {
@@ -20,7 +21,7 @@ struct CodeDiffView: View {
             }.font(.system(.caption2, design: .monospaced)).padding(.horizontal, 10)
             ScrollView(.horizontal) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(showAll ? diff.lines : Array(diff.lines.prefix(36))) { line in
+                    ForEach(showAll ? diff.lines : Array(diff.lines.prefix(previewLineLimit))) { line in
                         HStack(alignment: .top, spacing: 8) {
                             if numbered && (line.kind == .context || line.kind == .added || line.kind == .removed) {
                                 Text(line.old.map(String.init) ?? "").frame(width: 32, alignment: .trailing)
@@ -40,8 +41,8 @@ struct CodeDiffView: View {
                     }
                 }.textSelection(.enabled)
             }.defaultScrollAnchor(.topLeading)
-            if diff.lines.count > 36 {
-                Button(showAll ? "Collapse patch" : "Show \(diff.lines.count - 36) more lines") { showAll.toggle() }
+            if diff.lines.count > previewLineLimit {
+                Button(showAll ? "Collapse patch" : "Show \(diff.lines.count - previewLineLimit) more lines") { showAll.toggle() }
                     .font(.caption).foregroundStyle(PhrenTheme.accent).padding(10)
             }
             if diff.truncated { Text("Preview truncated. Copy the patch for all supplied lines.").font(.caption).foregroundStyle(PhrenTheme.textMuted).padding(10) }

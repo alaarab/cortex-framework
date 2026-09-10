@@ -15,10 +15,10 @@ final class ChatTimelineTests: XCTestCase {
         ])
         let groups = ChatTimelineEntry.group(messages)
         XCTAssertEqual(groups.flatMap(\.messages), messages)
-        XCTAssertEqual(groups.map { $0.messages.count }, [1, 1, 3, 1, 1])
-        XCTAssertEqual(groups.map(\.isActivity), [true, false, true, false, true])
-        XCTAssertEqual(ChatToolSummary(groups[2].messages).count, 2)
-        XCTAssertEqual(ChatToolSummary(groups[2].messages).preview, "swift test")
+        XCTAssertEqual(groups.map { $0.messages.count }, [1, 1, 2, 1, 1, 1])
+        XCTAssertEqual(groups.map(\.isActivity), [true, false, true, true, false, true])
+        XCTAssertEqual(ChatToolSummary(groups[2].messages).count, 1)
+        XCTAssertEqual(ChatToolSummary(groups[3].messages).preview, "swift test")
         XCTAssertTrue(ChatTimelineEntry.group([]).isEmpty)
     }
 
@@ -88,6 +88,43 @@ final class ChatTimelineTests: XCTestCase {
         XCTAssertEqual(diff.lines.filter { $0.kind == .removed }.map(\.old), [8, 20])
         let malformed = DiffPreview("@@ - + @@\n+x")
         XCTAssertNil(malformed.lines.last?.new)
+    }
+
+    func testParallelOutputsFollowTheirOwnCallIDsAndRepliesKeepTheirPosition() throws {
+        let messages = try read([
+            ["type": "function_call", "call_id": "a", "name": "exec_command", "arguments": "first"],
+            ["type": "function_call", "call_id": "b", "name": "exec_command", "arguments": "second"],
+            ["type": "function_call_output", "call_id": "b", "output": "second result"],
+            ["type": "function_call_output", "call_id": "a", "output": "first result"],
+            ["type": "message", "role": "assistant", "content": "Done"],
+            ["type": "function_call_output", "call_id": "a", "output": "Later output"]
+        ])
+        let groups = ChatTimelineEntry.group(messages)
+        XCTAssertEqual(groups.map { $0.messages.map(\.text) }, [["first", "first result"], ["second", "second result"], ["Done"], ["Later output"]])
+        XCTAssertEqual(Set(groups.flatMap(\.messages).map(\.id)), Set(messages.map(\.id)))
+        XCTAssertEqual(groups[1].id, ChatTimelineEntry.group(Array(messages.prefix(2)))[1].id)
+    }
+
+    func testUnknownOrAmbiguousResultIDsNeverAttachToAnotherCall() throws {
+        let messages = try read([
+            ["type": "function_call", "call_id": "same", "name": "exec_command", "arguments": "one"],
+            ["type": "function_call", "call_id": "same", "name": "exec_command", "arguments": "two"],
+            ["type": "function_call_output", "call_id": "same", "output": "ambiguous"],
+            ["type": "function_call_output", "call_id": "absent", "output": "unmatched"],
+            ["type": "function_call_output", "output": "unidentified"]
+        ])
+        XCTAssertEqual(ChatTimelineEntry.group(messages).map { $0.messages.count }, [1, 1, 1, 1, 1])
+    }
+
+    func testToolPreviewBoundsManyLinesAndLongUnicodeWithoutLosingSource() throws {
+        XCTAssertEqual(ToolPresentation(title: "mcp__phren__get_tasks", text: "{}").title, "Phren · Get Tasks")
+        let output = (0..<2_000).map { "Line \($0)" }.joined(separator: "\n")
+        let display = ToolPresentation(title: "Tool result", text: output)
+        XCTAssertEqual(ToolOutputPreview(display.body).text, "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5…")
+        XCTAssertEqual(display.body, output)
+        let unicode = String(repeating: "👩🏽‍💻", count: 1_000)
+        XCTAssertEqual(ToolOutputPreview(unicode).text, String(unicode.prefix(640)) + "…")
+        XCTAssertEqual(ToolOutputPreview("Small output").text, "Small output")
     }
 
     private func read(_ payloads: [[String: Any]]) throws -> [AgentChatMessage] {

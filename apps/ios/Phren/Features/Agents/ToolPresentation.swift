@@ -48,6 +48,12 @@ struct ToolPresentation {
     }
 
     static func name(_ name: String) -> String {
+        let components = name.components(separatedBy: "__")
+        if components.count >= 3, components[0] == "mcp" {
+            let server = components[1].replacingOccurrences(of: "_", with: " ").capitalized
+            let tool = components.dropFirst(2).joined(separator: " ").replacingOccurrences(of: "_", with: " ").capitalized
+            return "\(server) · \(tool)"
+        }
         if ["exec_command", "bash", "shell", "Bash", "Shell", "write_stdin"].contains(name) { return "Shell" }
         if ["apply_patch", "Edit", "MultiEdit", "str_replace_editor"].contains(name) { return "Patch" }
         if ["exec", "parallel"].contains(name) { return "Tools" }

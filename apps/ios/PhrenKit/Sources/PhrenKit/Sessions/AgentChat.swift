@@ -83,6 +83,8 @@ public struct AgentChatMessage: Equatable, Sendable, Identifiable {
     public let title: String?
     public let text: String
     public var imageBlocks: [Int] = []
+    public var toolCallID: String? = nil
+    public var isToolResult: Bool { role == .tool && title == "Tool result" }
 }
 
 /// Normalize only visible conversation content. Encrypted reasoning, system
@@ -118,9 +120,9 @@ public struct AgentChatTranscript: Equatable, Sendable {
             let parts = source == "codex" ? codex(raw) : source == "copilot" ? copilot(raw) : claude(raw)
             for (index, part) in parts.enumerated() {
                 let id = "\(line):\(index)"
-                guard !part.text.isEmpty, seen.insert(id).inserted else { continue }
+                guard (!part.text.isEmpty || part.role == .tool), seen.insert(id).inserted else { continue }
                 messages.append(.init(id: id, line: line, role: part.role, title: part.title,
-                                      text: String(part.text.prefix(64_000)), imageBlocks: part.imageBlocks))
+                                      text: String(part.text.prefix(64_000)), imageBlocks: part.imageBlocks, toolCallID: part.toolCallID))
             }
         }
         return Self(kind: kind, messages: messages.sorted { $0.line < $1.line }, hasMore: frame["hasMore"] as? Bool ?? false,
@@ -129,7 +131,13 @@ public struct AgentChatTranscript: Equatable, Sendable {
                     progressEvents: progressEvents)
     }
 
-    private struct Part { let role: AgentChatMessage.Role; var title: String? = nil; let text: String; var imageBlocks: [Int] = [] }
+    private struct Part {
+        let role: AgentChatMessage.Role
+        var title: String? = nil
+        let text: String
+        var imageBlocks: [Int] = []
+        var toolCallID: String? = nil
+    }
     private static func text(_ value: Any?) -> String {
         if let value = value as? String { return value }
         guard let blocks = value as? [[String: Any]] else { return "" }
@@ -157,9 +165,9 @@ public struct AgentChatTranscript: Equatable, Sendable {
             }
             return [Part(role: role, text: text(payload["content"]), imageBlocks: images)]
         case "function_call", "custom_tool_call":
-            return [Part(role: .tool, title: payload["name"] as? String ?? "Tool", text: readable(payload["arguments"] ?? payload["input"]))]
+            return [Part(role: .tool, title: payload["name"] as? String ?? "Tool", text: readable(payload["arguments"] ?? payload["input"]), toolCallID: payload["call_id"] as? String)]
         case "function_call_output", "custom_tool_call_output":
-            return [Part(role: .tool, title: "Tool result", text: readable(payload["output"]))]
+            return [Part(role: .tool, title: "Tool result", text: readable(payload["output"]), toolCallID: payload["call_id"] as? String)]
         default: return []
         }
     }
@@ -171,10 +179,10 @@ public struct AgentChatTranscript: Equatable, Sendable {
             guard data["source"] == nil || data["source"] as? String == "user" else { return [] }
             return [Part(role: .user, text: text(data["content"]))]
         case "assistant.message": return [Part(role: .assistant, text: text(data["content"]))]
-        case "tool.execution_start": return [Part(role: .tool, title: data["toolName"] as? String ?? "Tool", text: readable(data["arguments"]))]
+        case "tool.execution_start": return [Part(role: .tool, title: data["toolName"] as? String ?? "Tool", text: readable(data["arguments"]), toolCallID: data["toolCallId"] as? String)]
         case "tool.execution_complete":
             let result = data["result"] as? [String: Any], error = data["error"] as? [String: Any]
-            return [Part(role: .tool, title: "Tool result", text: text(result?["content"]) + text(error?["message"]))]
+            return [Part(role: .tool, title: "Tool result", text: text(result?["content"]) + text(error?["message"]), toolCallID: data["toolCallId"] as? String)]
         default: return []
         }
     }
@@ -188,8 +196,8 @@ public struct AgentChatTranscript: Equatable, Sendable {
             switch block["type"] as? String {
             case "text": return Part(role: role, text: block["text"] as? String ?? "")
             case "image": return Part(role: role, text: "[Image attachment]", imageBlocks: [index])
-            case "tool_use": return Part(role: .tool, title: block["name"] as? String ?? "Tool", text: readable(block["input"]))
-            case "tool_result": return Part(role: .tool, title: "Tool result", text: text(block["content"]))
+            case "tool_use": return Part(role: .tool, title: block["name"] as? String ?? "Tool", text: readable(block["input"]), toolCallID: block["id"] as? String)
+            case "tool_result": return Part(role: .tool, title: "Tool result", text: text(block["content"]), toolCallID: block["tool_use_id"] as? String)
             default: return nil
             }
         }
