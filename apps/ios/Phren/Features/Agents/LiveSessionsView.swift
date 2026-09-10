@@ -40,7 +40,8 @@ struct LiveSessionsView: View {
                     if let preferences = try? LiveSessionPreferences.read(data) {
                         ForEach(preferences.hosts) { host in
                             NavigationLink { LiveHostView(hostID: host.id) } label: {
-                                PhrenMenuRow(title: host.name, subtitle: host.address, icon: "desktopcomputer")
+                                let monitor = overview.computers.first { $0.id == host.id }?.monitor
+                                PhrenMenuRow(title: host.name, subtitle: monitor?.snapshot == nil && monitor?.message == nil ? "Connecting…" : host.address, icon: "desktopcomputer")
                             }
                             .accessibilityIdentifier("live-host:\(host.id)")
                         }
@@ -61,6 +62,20 @@ struct LiveSessionsView: View {
                     NavigationLink { AgentsView() } label: {
                         PhrenMenuRow(title: "Agent instructions", icon: "person.crop.rectangle.stack")
                     }
+                }
+            }
+            .opacity(hosts.isEmpty || overview.ready ? 1 : 0)
+            .allowsHitTesting(hosts.isEmpty || overview.ready)
+            .accessibilityHidden(!hosts.isEmpty && !overview.ready)
+            .overlay {
+                if !hosts.isEmpty && !overview.ready {
+                    VStack(spacing: 14) {
+                        ProgressView().tint(PhrenTheme.cyan)
+                        Text("Connecting your sessions").font(.subheadline.weight(.medium))
+                        Text("Across \(hosts.count) \(hosts.count == 1 ? "computer" : "computers")")
+                            .font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(PhrenTheme.bg).accessibilityIdentifier("agents-loading")
                 }
             }
         }
@@ -154,10 +169,11 @@ final class LiveHostMonitor {
         self.pollInterval = pollInterval; self.fetchSnapshot = fetch
     }
 
-    func run(host: LiveHost) async {
+    func run(host: LiveHost, onFirstRefresh: (@MainActor () -> Void)? = nil) async {
         let run = UUID()
         generation = run
         polling = true
+        var first = true
         defer { if generation == run { polling = false; refreshing = false } }
         while !Task.isCancelled {
             refreshing = true
@@ -177,6 +193,7 @@ final class LiveHostMonitor {
                 if case LiveConnectionError.untrustedHost(let key) = error { fingerprint = key }
             }
             refreshing = false
+            if first { first = false; onFirstRefresh?() }
             if fingerprint != nil { return }
             do { try await Task.sleep(for: pollInterval) } catch { return }
         }
@@ -189,6 +206,9 @@ final class LiveHostMonitor {
                 return try MoshiWorkspaces.read(Data(#"{"kind":"herdr","groups":[]}"#.utf8))
             }
             let remote = host.id.uuidString.hasSuffix("000002")
+            if remote && previousUpdate == nil && ProcessInfo.processInfo.arguments.contains("--all-sessions-delayed") {
+                try await Task.sleep(for: .seconds(4))
+            }
             if remote && previousUpdate != nil && ProcessInfo.processInfo.arguments.contains("--all-sessions-offline") {
                 throw LiveConnectionError.disconnected
             }

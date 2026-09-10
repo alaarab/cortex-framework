@@ -5,10 +5,10 @@ import PhrenLive
 
 @MainActor
 final class SessionOverviewTests: XCTestCase {
-    func testFastComputerAppearsWithoutWaitingForAnOfflineComputer() async throws {
+    func testInitialRefreshAppearsTogetherWithoutWaitingForeverForAnOfflineComputer() async throws {
         let fast = try host("Fast"), slow = try host("Slow")
         let snapshot = try snapshot("working")
-        let model = SessionOverviewMonitor {
+        let model = SessionOverviewMonitor(initialWait: .milliseconds(150)) {
             LiveHostMonitor { host, _ in
                 if host.id == slow.id { try await Task.sleep(for: .seconds(30)) }
                 return snapshot
@@ -16,11 +16,58 @@ final class SessionOverviewTests: XCTestCase {
         }
         let run = Task { await model.run(hosts: [slow, fast]) }
         await eventually { model.computers.first { $0.id == fast.id }?.monitor.snapshot != nil }
+        XCTAssertFalse(model.ready)
+        XCTAssertTrue(groups(model).isEmpty, "No partial sections while the first refresh is pending")
+        XCTAssertEqual(model.connectedCount(at: .now), 0)
+        await eventually { model.ready }
         XCTAssertEqual(model.connectedCount(at: .now), 1)
         XCTAssertEqual(groups(model).flatMap(\.sessions).map(\.host.id), [fast.id])
         run.cancel(); await run.value
         XCTAssertEqual(model.connectedCount(at: .now), 0)
         XCTAssertEqual(groups(model).map(\.title), ["Last seen"])
+    }
+
+    func testFirstRefreshRevealsAllHostsAtOnceAndCachedReturnDoesNotFlashLoading() async throws {
+        let fast = try host("Fast"), slow = try host("Slow")
+        let snapshot = try snapshot("working")
+        var release = false
+        let model = SessionOverviewMonitor {
+            LiveHostMonitor { host, _ in
+                while host.id == slow.id && !release { try await Task.sleep(for: .milliseconds(10)) }
+                return snapshot
+            }
+        }
+        let run = Task { await model.run(hosts: [fast, slow]) }
+        await eventually { model.computers.first?.monitor.snapshot != nil }
+        XCTAssertFalse(model.ready)
+        XCTAssertTrue(groups(model).isEmpty)
+        release = true
+        await eventually { model.ready }
+        XCTAssertEqual(groups(model).flatMap(\.sessions).count, 2)
+        run.cancel(); await run.value
+        let next = Task { await model.run(hosts: [fast, slow]) }
+        await eventually { model.computers.allSatisfy { $0.monitor.polling } }
+        XCTAssertTrue(model.ready)
+        XCTAssertEqual(groups(model).flatMap(\.sessions).count, 2)
+        next.cancel(); await next.value
+    }
+
+    func testCancelledBatchCannotRevealAReplacementBatch() async throws {
+        let first = try host("Old"), second = try host("New")
+        let model = SessionOverviewMonitor(initialWait: .seconds(1)) {
+            LiveHostMonitor { _, _ in
+                try await Task.sleep(for: .seconds(30))
+                throw LiveConnectionError.disconnected
+            }
+        }
+        let run = Task { await model.run(hosts: [first]) }
+        await eventually { !model.computers.isEmpty }
+        run.cancel(); await run.value
+        let next = Task { await model.run(hosts: [second]) }
+        await eventually { model.computers.first?.id == second.id }
+        XCTAssertFalse(model.ready)
+        XCTAssertTrue(groups(model).isEmpty)
+        next.cancel(); await next.value
     }
 
     func testSameSessionIDsOnTwoComputersStayDistinctAndSearchFindsHostAndProject() async throws {

@@ -2,6 +2,50 @@ import XCTest
 
 final class TerminalInteractionTests: XCTestCase {
     @MainActor
+    func testArrowPadEditingAndCtrlHoldShortcutsDoNotSubmitCommands() throws {
+        let app = launch("--terminal-controls-fixture")
+        app.buttons["Arrow keys"].tap()
+        for title in ["Backspace", "Up", "Clear line", "Left", "Enter", "Right", "Down"] {
+            XCTAssertTrue(app.buttons[title].isHittable)
+        }
+        let enter = app.buttons["Enter"].frame
+        XCTAssertGreaterThan(enter.midX, app.buttons["Left"].frame.midX)
+        XCTAssertLessThan(enter.midX, app.buttons["Right"].frame.midX)
+        app.buttons["Backspace"].tap()
+        app.buttons["Clear line"].tap()
+        app.buttons["Enter"].tap()
+        capture(app, "Arrow pad with Enter and Clear Line")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.3)).tap()
+        XCTAssertEqual(try state(app).input, "\u{7F}\u{05}\u{15}\r")
+        let before = try state(app).input
+        app.buttons["Ctrl"].press(forDuration: 0.6)
+        XCTAssertTrue(app.buttons["Close shortcuts"].waitForExistence(timeout: 3))
+        XCTAssertEqual(try state(app).input, before, "Holding Ctrl must not send a key")
+        app.buttons["Codex shortcuts"].tap()
+        app.buttons["terminal-command:codex:/model"].tap()
+        XCTAssertEqual(try state(app).input, before + "/model ", "A command waits for explicit Enter")
+        capture(app, "Tabbed terminal command palette")
+        app.buttons["Claude shortcuts"].tap()
+        XCTAssertTrue(app.buttons["terminal-command:claude:/help"].isHittable)
+        app.buttons["Terminal gestures"].tap()
+        XCTAssertTrue(app.switches["Two-finger gestures"].isHittable)
+        capture(app, "Terminal gesture settings")
+        app.buttons["Close shortcuts"].tap()
+        XCTAssertEqual(app.buttons["Ctrl"].value as? String, "Off", "A hold must not also latch Ctrl")
+        app.buttons["Ctrl"].tap()
+        XCTAssertEqual(app.buttons["Ctrl"].value as? String, "On")
+        app.buttons["Ctrl"].tap()
+        XCTAssertEqual(app.buttons["Ctrl"].value as? String, "Off")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        app.buttons["Terminal shortcuts"].tap()
+        app.buttons["Herdr shortcuts"].tap()
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Workspaces & panes")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["Open Herdr terminal"].waitForExistence(timeout: 5), "Herdr shortcuts open native controls on this computer")
+        XCTAssertTrue(app.buttons["Open Herdr terminal"].isEnabled)
+        XCTAssertTrue(app.buttons["Open Herdr terminal"].isHittable)
+    }
+
+    @MainActor
     func testSwitchActivatesOnFirstTapWithoutRaisingKeyboard() throws {
         let app = launch("--terminal-controls-fixture")
         let before = try state(app)

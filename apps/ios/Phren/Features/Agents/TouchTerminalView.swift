@@ -9,6 +9,7 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
     private var pinchStartSize: CGFloat = 12
     private var requestingKeyboard = false
     var onTextSizeChanged: ((CGFloat) -> Void)?
+    var onShortcutGesture: (() -> Void)?
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     #if DEBUG && targetEnvironment(simulator)
     private(set) var copyActions = 0
@@ -25,6 +26,15 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
         panGestureRecognizer.maximumNumberOfTouches = 1
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(zoomTerminal(_:)))
         addGestureRecognizer(pinch)
+        for direction: UISwipeGestureRecognizer.Direction in [.up, .down] {
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(twoFingerSwipe(_:)))
+            swipe.numberOfTouchesRequired = 2
+            swipe.direction = direction
+            // A pinch wins if the fingers move apart. Parallel two-finger
+            // swipes stay local and never send mouse or keyboard input.
+            swipe.require(toFail: pinch)
+            addGestureRecognizer(swipe)
+        }
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(selectText(_:)))
         hold.minimumPressDuration = 0.45
         hold.numberOfTouchesRequired = 1
@@ -51,6 +61,14 @@ final class TouchTerminalView: TerminalView, UIGestureRecognizerDelegate, UIEdit
         requestingKeyboard = true
         defer { requestingKeyboard = false }
         _ = becomeFirstResponder()
+    }
+
+    @objc private func twoFingerSwipe(_ gesture: UISwipeGestureRecognizer) {
+        let defaults = AppModel.isUITesting ? UserDefaults(suiteName: "phren.ui-tests")! : .standard
+        guard defaults.object(forKey: "terminal.twoFingerGestures.v1") as? Bool != false,
+              gesture.state == .ended else { return }
+        if gesture.direction == .down { _ = resignFirstResponder() }
+        else if gesture.direction == .up { onShortcutGesture?() }
     }
 
     override func becomeFirstResponder() -> Bool {

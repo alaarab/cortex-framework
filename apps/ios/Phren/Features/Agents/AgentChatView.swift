@@ -361,17 +361,8 @@ struct AgentChatView: View {
             }
 
             if composing, AgentSlashCommand.isCommand(model.draft) {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        Button("All commands", systemImage: "terminal") { openCommandMenu() }
-                            .accessibilityIdentifier("chat-all-commands")
-                        ForEach(AgentSlashCommand.suggestions(source: model.target?.source ?? "", draft: model.draft), id: \.self) { name in
-                            Button(name) { model.draft = name + " " }
-                                .accessibilityIdentifier("chat-command:" + name)
-                        }
-                    }.font(.system(size: 12, design: .monospaced))
-                        .buttonStyle(.plain).foregroundStyle(PhrenTheme.cyan).frame(height: 36)
-                }.scrollIndicators(.hidden)
+                SlashCommandMenu(source: model.target?.source ?? "", draft: model.draft,
+                                 choose: { model.draft = $0 + " " }, openAll: openCommandMenu)
             }
             if let status = model.deliveryStatus { Text(status).font(.caption).foregroundStyle(PhrenTheme.cyan) }
             HStack(spacing: 8) {

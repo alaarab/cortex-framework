@@ -248,7 +248,7 @@ struct HerdrTerminalView: View {
     @AppStorage("sessions.live.preferences.v1") private var hostData = Data()
     @State private var model = HerdrTerminalModel()
     @State private var visible = false
-    @State private var directions = false
+    @State private var shortcuts = false
     @State private var reconnect = UUID()
     private var currentHost: LiveHost? { (try? LiveSessionPreferences.read(hostData))?.hosts.first { $0.id == host.id } }
     private var active: Bool { visible && scenePhase == .active && currentHost == host }
@@ -266,44 +266,9 @@ struct HerdrTerminalView: View {
             }
             if currentHost != host { Text("Connection settings changed. Reopen Herdr from the computer list.").font(.footnote).padding() }
             HerdrTerminalSurface(model: model).padding(.horizontal, 4)
-            HStack(spacing: 0) {
-                key("Esc", "\u{1B}"); key("Tab", "\t")
-                Button {
-                    model.terminal.controlModifier.toggle()
-                    model.control = model.terminal.controlModifier
-                } label: {
-                    Text("Ctrl").foregroundStyle(model.control ? PhrenTheme.cyan : PhrenTheme.text)
-                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                        .background(model.control ? PhrenTheme.cyan.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                }.accessibilityValue(model.control ? "On" : "Off")
-                Button { directions.toggle() } label: {
-                    Image(systemName: "dpad").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                }.accessibilityLabel("Arrow keys")
-                    .popover(isPresented: $directions) {
-                        VStack(spacing: 0) {
-                            arrow("arrow.up", "Up", "\u{1B}[A")
-                            HStack(spacing: 0) {
-                                arrow("arrow.left", "Left", "\u{1B}[D")
-                                arrow("arrow.down", "Down", "\u{1B}[B")
-                                arrow("arrow.right", "Right", "\u{1B}[C")
-                            }
-                        }.padding(8).presentationCompactAdaptation(.popover)
-                    }
-                Button { model.terminal.paste(nil) } label: {
-                    Image(systemName: "document.on.clipboard").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                }.accessibilityLabel("Paste into terminal")
-                Button {
-                    model.terminal.toggleKeyboard()
-                } label: {
-                    Image(systemName: "keyboard").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                }.accessibilityLabel("Toggle terminal keyboard")
-            }
-            .font(.system(size: 16, weight: .medium)).buttonStyle(.plain)
-            .foregroundStyle(PhrenTheme.text).padding(.horizontal, 8).padding(.vertical, 2)
-            .background(PhrenTheme.bgSunken)
-            .overlay(alignment: .top) { Rectangle().fill(PhrenTheme.border).frame(height: 0.5) }
-            .accessibilityIdentifier("terminal-toolbar")
-            .disabled(!model.connected || !active)
+            TerminalControls(terminal: model.terminal, hostID: host.id,
+                             source: target?.source ?? session?.tab.agent ?? "", enabled: model.connected && active, control: $model.control,
+                             shortcuts: $shortcuts, send: model.input)
         }
         #if DEBUG && targetEnvironment(simulator)
         .overlay(alignment: .topLeading) {
@@ -320,20 +285,17 @@ struct HerdrTerminalView: View {
                 Button("Reconnect", systemImage: "arrow.clockwise") { reconnect = UUID() }.disabled(!active)
             }
         }
-        .onAppear { visible = true }.onDisappear { visible = false }
+        .onAppear {
+            visible = true
+            model.terminal.onShortcutGesture = { shortcuts = true }
+        }.onDisappear {
+            visible = false
+            shortcuts = false
+            model.terminal.onShortcutGesture = nil
+        }
         .task(id: Run(active: active, reconnect: reconnect)) {
             if active { await model.run(host: host, session: session, target: target, paneID: paneID, commandMenu: commandMenu) }
         }
-    }
-    private func key(_ title: String, _ sequence: String) -> some View {
-        Button { model.input(sequence) } label: {
-            Text(title).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-        }
-    }
-    private func arrow(_ symbol: String, _ title: String, _ sequence: String) -> some View {
-        Button { model.input(sequence) } label: {
-            Image(systemName: symbol).frame(width: 48, height: 44).contentShape(Rectangle())
-        }.accessibilityLabel(title).disabled(!model.connected || !active)
     }
     private struct Run: Equatable { let active: Bool; let reconnect: UUID }
 }

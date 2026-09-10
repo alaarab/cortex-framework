@@ -5,6 +5,18 @@ final class AllSessionsTests: XCTestCase {
     private let linux = "A1000000-0000-0000-0000-000000000002"
 
     @MainActor
+    func testInitialOverviewRevealsTogetherAfterTheSlowerComputerResponds() {
+        let app = launch(extra: ["--all-sessions-delayed"])
+        let loading = app.descendants(matching: .any).matching(identifier: "agents-loading").firstMatch
+        XCTAssertTrue(loading.exists)
+        XCTAssertFalse(row(app, host: mac).exists, "The fast host must not appear as a partial page")
+        XCTAssertTrue(row(app, host: mac).waitForExistence(timeout: 8))
+        XCTAssertTrue(row(app, host: linux).exists)
+        XCTAssertFalse(loading.exists)
+        capture(app, "Complete overview after coordinated loading")
+    }
+
+    @MainActor
     func testOverviewOpensTheRightComputerWithCollidingWorkspaceAndTabIDs() {
         let app = launch(extra: ["--all-sessions-change"])
         let first = row(app, host: mac), second = row(app, host: linux)
@@ -15,7 +27,8 @@ final class AllSessionsTests: XCTestCase {
         XCTAssertLessThanOrEqual(first.frame.height, 100)
         capture(app, "Sessions across two computers")
         first.tap()
-        XCTAssertTrue(app.staticTexts["Test Mac · Shared project"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Mac · Shared project"))
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         XCTAssertTrue(composer.waitForExistence(timeout: 8))
         XCTAssertEqual(app.keyboards.count, 0)
@@ -25,14 +38,15 @@ final class AllSessionsTests: XCTestCase {
         // The next overview poll moves this row from Working to Done. The
         // conversation must remain presented even though its row moved groups.
         Thread.sleep(forTimeInterval: 11)
-        XCTAssertTrue(app.staticTexts["Test Mac · Shared project"].exists)
-        app.navigationBars.buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Mac · Shared project"))
+        app.buttons["chat-close"].tap()
         XCTAssertTrue(second.waitForExistence(timeout: 5))
         second.tap()
-        XCTAssertTrue(app.staticTexts["Test Linux · Shared project"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Linux · Shared project"))
         XCTAssertTrue(app.staticTexts["The project screen is ready. What would you like to change?"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.staticTexts["Overview Mac only"].exists)
-        app.navigationBars.buttons["Done"].tap()
+        app.buttons["chat-close"].tap()
         app.buttons["overview-detail:\(linux):herdr:default:w1:w1:t1"].tap()
         XCTAssertTrue(app.navigationBars["Session details"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Review Linux deployment"].exists)
@@ -61,7 +75,8 @@ final class AllSessionsTests: XCTestCase {
         XCTAssertTrue(first.isEnabled); XCTAssertFalse(second.isEnabled)
         capture(app, "One offline computer leaves the other sessions live")
         first.tap()
-        XCTAssertTrue(app.staticTexts["Test Mac · Shared project"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Mac · Shared project"))
     }
 
     @MainActor

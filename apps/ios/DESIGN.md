@@ -9,15 +9,26 @@ own colors and identity.
   session details instead of repeating a second action row on every card.
 - Put sessions across computers directly on Agents. Working and waiting come
   first; name the computer on every row. Connection management belongs below
-  the work. A computer going offline must not hide or delay another computer's
-  sessions, and previous state must be visibly separate from live activity.
+  the work. Reveal the initial overview together after every computer's first
+  response, with an eight-second ceiling for unreachable computers. Preserve
+  cached content on return; later refreshes stay independent. Previous state
+  must be visibly separate from live activity.
 - Connection freshness and counts belong in a quiet inline status area. Herdr
   belongs in the computer toolbar. Neither needs a large promotional tile.
 - Keep controls at least 44 points to touch. Reduce padding, duplicate controls,
   and extra rows before reducing text size. Allow rows to grow with Dynamic Type.
 - Use exactly one terminal key bar, 48 points high. Esc, Tab, Ctrl, a directional
-  pad, Paste, and keyboard visibility cover common input without four permanent
-  arrow buttons or another accessory row above the system keyboard.
+  pad, shortcuts, Paste, and keyboard visibility cover common input without
+  another accessory row. The arrow pad includes centered Enter, Backspace,
+  and Clear Line (Ctrl-E then Ctrl-U). A Ctrl hold opens shortcuts without also
+  toggling Ctrl. Provider tabs and favorites insert commands without Enter.
+  Herdr actions open native navigation for the current computer; they never
+  assume a keyboard prefix shared by all servers.
+- Slash suggestions are a bounded vertical list above the composer, with command
+  names and descriptions. Picking one fills the draft; Send remains explicit.
+- Two-finger swipes up open shortcuts; down hides the keyboard. These are local
+  gestures, optional in the shortcut panel's gesture settings. Preserve all
+  one-finger, pinch, link and selection behavior.
 - A finger swipe scrolls. In a mouse-aware TUI such as Herdr, send wheel events;
   in a normal shell, scroll local history. Never reinterpret an ordinary drag as
   remote text selection or cursor-key input.

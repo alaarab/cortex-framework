@@ -331,7 +331,13 @@ localhost port, external OAuth callbacks, or untrusted HTTPS certificates may
 need their development server configuration adjusted. A phone port collision
 uses an available port; relative URLs and ordinary live reload still work.
 
-The terminal has one compact key bar with a directional pad and explicit Paste.
+The terminal has one compact rounded key bar with a directional pad and explicit Paste.
+The pad includes Enter between Left and Right, Backspace, and Clear Line. Tap Ctrl
+for the Control modifier; hold it for a shortcut palette with Favorites, Codex,
+Claude, Copilot, Herdr, and Keys tabs. Hold a command to save it as a favorite.
+Commands insert text without Enter. The Herdr tab opens workspace/pane navigation
+and web servers for the same computer. Two-finger swipes up open shortcuts and
+down hide the keyboard; turn these off in the palette's gesture settings.
 Only its keyboard button raises the keyboard. Controls and web links activate on
 the first tap with the keyboard hidden or visible. Pinch to resize the text and
 remote grid; zooming out fits more columns for Herdr's sidebar. The chosen text
@@ -951,3 +957,16 @@ exactly which transcription needs updating.
 - `stores.yaml` auto-discovery as an add-store suggestion source
 - Hook configuration from the phone
 - Monitoring and controlling agents running on a computer
+
+### Coordinated session loading and command suggestions
+
+The Agents overview waits for each computer's first response before revealing its
+sections together. An eight-second ceiling keeps an unreachable computer from
+blocking the page; pending computers stay labeled Connecting. Returning to cached
+sessions avoids a loading flash. Subsequent updates remain independent per host.
+
+Slash suggestions appear vertically above the chat composer, with a command name
+and description on each row. The list scrolls within a compact panel. Selecting
+a suggestion fills the draft, including a space for arguments, without sending it.
+All commands still opens the exact agent's live terminal menu for installed skills
+and extension commands.

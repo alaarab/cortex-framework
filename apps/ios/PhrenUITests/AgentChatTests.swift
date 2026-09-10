@@ -2,6 +2,23 @@ import XCTest
 
 final class AgentChatTests: XCTestCase {
     @MainActor
+    func testLargeTextCommandMenuLeavesComposerAndKeyboardUsable() {
+        let app = launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap(); composer.typeText("/")
+        let menu = app.descendants(matching: .any).matching(identifier: "chat-command-menu").firstMatch
+        XCTAssertLessThan(menu.frame.height, 300)
+        XCTAssertTrue(composer.isHittable)
+        XCTAssertTrue(app.buttons["chat-send"].isHittable)
+        XCTAssertTrue(app.buttons["chat-command:/model"].isHittable)
+        capture(app, "Vertical slash commands with accessibility text")
+        app.buttons["chat-command:/model"].tap()
+        XCTAssertEqual(composer.value as? String, "/model ")
+    }
+
+    @MainActor
     func testTranscriptLinkStillOpensWhileKeyboardIsVisible() {
         let app = launch(extra: ["--chat-link", "--capture-moshi-links"])
         app.buttons["live-chat:w7:w7:t9"].tap()
@@ -69,6 +86,11 @@ final class AgentChatTests: XCTestCase {
         let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
         XCTAssertTrue(composer.waitForExistence(timeout: 8))
         composer.tap(); composer.typeText("/mo")
+        XCTAssertTrue(app.buttons["chat-command:/model"].label.contains("Choose the model"))
+        let menu = app.descendants(matching: .any).matching(identifier: "chat-command-menu").firstMatch
+        XCTAssertLessThan(menu.frame.maxY, composer.frame.minY)
+        XCTAssertGreaterThan(menu.frame.width, app.frame.width - 40)
+        capture(app, "Vertical slash command suggestions above the draft")
         app.buttons["chat-command:/model"].tap()
         XCTAssertEqual(composer.value as? String, "/model ")
         app.buttons["chat-all-commands"].tap()
@@ -81,6 +103,27 @@ final class AgentChatTests: XCTestCase {
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertEqual(composer.value as? String, "/model ")
+    }
+
+    @MainActor
+    func testSlashMenuRowsStayVerticalAndScrollable() {
+        let app = launch()
+        app.buttons["live-chat:w7:w7:t9"].tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap(); composer.typeText("/")
+        let first = app.buttons["chat-command:/model"].frame
+        let second = app.buttons["chat-command:/permissions"].frame
+        XCTAssertEqual(first.minX, second.minX, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(second.minY, first.maxY)
+        XCTAssertGreaterThanOrEqual(first.height, 44)
+        XCTAssertLessThan(app.descendants(matching: .any).matching(identifier: "chat-command-menu").firstMatch.frame.height, 300)
+        capture(app, "Compact vertical command menu")
+        app.scrollViews["chat-command-list"].swipeUp()
+        XCTAssertTrue(app.buttons["chat-command:/mcp"].isHittable)
+        app.buttons["chat-command:/mcp"].tap()
+        XCTAssertEqual(composer.value as? String, "/mcp ")
+        XCTAssertFalse(app.buttons["chat-command:/model"].exists)
     }
 
     @MainActor
