@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Semantic colors follow the saved appearance without resetting view state.
 enum PhrenTheme {
-    private static var palette: PhrenPalette { PhrenAppearance.shared.style.palette }
+    private static var palette: PhrenPalette { PhrenAppearance.shared.palette }
     static var bg: Color { Color(hex: palette.background) }
     static var bgSunken: Color { Color(hex: palette.sunken) }
     static var surface: Color { Color(hex: palette.surface) }
@@ -11,6 +11,8 @@ enum PhrenTheme {
     // Chat uses quieter surfaces so the transcript carries the hierarchy.
     static var chatCanvas: Color { Color(hex: palette.chatCanvas) }
     static var chatPanel: Color { Color(hex: palette.chatPanel) }
+    static var toolPanel: Color { Color(hex: palette.toolPanel ?? palette.chatPanel) }
+    static var link: Color { Color(hex: palette.link ?? palette.action) }
 
     static var text: Color { Color(hex: palette.text) }
     static var textSecondary: Color { Color(hex: palette.secondary) }

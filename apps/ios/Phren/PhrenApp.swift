@@ -20,7 +20,7 @@ struct PhrenApp: App {
                 .foregroundStyle(PhrenTheme.text)
                 // All current palettes use dark system controls and keyboards.
                 .preferredColorScheme(.dark)
-                .onChange(of: appearance.style) { _, _ in Self.applyPhrenChrome() }
+                .onChange(of: appearance.palette) { _, _ in Self.applyPhrenChrome() }
                 .modifier(ExternalURLTestCapture())
                 .task { await model.bootstrap() }
                 .onChange(of: scenePhase) { _, phase in

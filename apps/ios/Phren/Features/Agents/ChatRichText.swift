@@ -54,7 +54,7 @@ struct ChatRichText: View {
                 } else {
                     Text((try? AttributedString(markdown: block.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block.text))
                         .font(.system(size: block.heading ? headingSize : textSize, weight: block.heading ? .semibold : .regular, design: .monospaced))
-                        .lineSpacing(3).textSelection(.enabled).tint(PhrenTheme.cyan)
+                        .lineSpacing(3).textSelection(.enabled).tint(PhrenTheme.link)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

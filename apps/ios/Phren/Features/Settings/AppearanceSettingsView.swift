@@ -2,52 +2,90 @@ import SwiftUI
 
 struct AppearanceSettingsView: View {
     @State private var appearance = PhrenAppearance.shared
+    @State private var editingTheme: PhrenCustomTheme?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Make it yours.")
                     .font(.title2.weight(.semibold)).foregroundStyle(PhrenTheme.text)
-                Text("Choose a palette for your projects, chats, and terminals.")
-                    .font(.subheadline).foregroundStyle(PhrenTheme.textMuted)
-                ForEach(PhrenAppearanceStyle.allCases) { style in
-                    Button { appearance.style = style } label: {
-                        themeCard(style)
+                Button {
+                    editingTheme = .init(name: "\(appearance.name) custom", palette: appearance.palette)
+                } label: {
+                    Label("Create custom theme", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14).phrenCard()
+                }.buttonStyle(.plain).accessibilityIdentifier("theme-create")
+                if !appearance.customThemes.isEmpty {
+                    Text("YOUR THEMES").font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                    ForEach(appearance.customThemes) { theme in
+                        VStack(alignment: .trailing, spacing: 4) {
+                            themeChoice(id: theme.id, name: theme.name, detail: "Custom palette", palette: theme.palette)
+                            Button("Edit", systemImage: "pencil") { editingTheme = theme }
+                                .font(.caption).frame(minHeight: 36).accessibilityIdentifier("theme-edit-\(theme.id)")
+                        }
+                        .contextMenu {
+                            Button("Duplicate", systemImage: "plus.square.on.square") {
+                                editingTheme = .init(name: "\(theme.name) copy", palette: theme.palette)
+                            }
+                            Button("Delete theme", role: .destructive) { appearance.remove(theme) }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(style.name + ". " + style.detail)
-                    .accessibilityValue(appearance.style == style ? "Selected" : "Not selected")
-                    .accessibilityAddTraits(appearance.style == style ? .isSelected : [])
-                    .accessibilityIdentifier("theme-\(style.rawValue)")
+                    Text("PRESETS").font(.caption).foregroundStyle(PhrenTheme.textMuted)
+                }
+                ForEach(PhrenAppearanceStyle.allCases) { style in
+                    themeChoice(id: style.id, name: style.name, detail: style.detail, palette: style.palette)
                 }
             }.padding(18)
         }
         .background(PhrenTheme.bg)
         .navigationTitle("Theme").navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editingTheme) { theme in
+            NavigationStack { CustomThemeEditor(theme: theme) }
+        }
     }
 
-    private func themeCard(_ style: PhrenAppearanceStyle) -> some View {
-        let palette = style.palette
-        let selected = appearance.style == style
-        return VStack(alignment: .leading, spacing: 14) {
+    private func themeChoice(id: String, name: String, detail: String, palette: PhrenPalette) -> some View {
+        Button { appearance.selectedID = id } label: {
+            ThemePreview(name: name, detail: detail, palette: palette, selected: appearance.selectedID == id)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name + ". " + detail)
+        .accessibilityValue(appearance.selectedID == id ? "Selected" : "Not selected")
+        .accessibilityAddTraits(appearance.selectedID == id ? .isSelected : [])
+        .accessibilityIdentifier("theme-\(id)")
+    }
+}
+
+struct ThemePreview: View {
+    let name: String
+    let detail: String
+    let palette: PhrenPalette
+    var selected = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(style.name).font(.headline)
-                    Text(style.detail).font(.caption).foregroundStyle(Color(hex: palette.muted))
+                    Text(name).font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(Color(hex: palette.muted))
                 }
                 Spacer(minLength: 4)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22)).foregroundStyle(Color(hex: selected ? palette.action : palette.dim))
             }
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Circle().fill(Color(hex: palette.action)).frame(width: 5, height: 5)
-                    Text("phren").font(.system(.caption, design: .monospaced).weight(.semibold))
-                    Spacer()
-                    Image(systemName: "ellipsis")
-                }
                 Text("A little memory. A clearer thought.")
                     .font(.system(.subheadline, design: .monospaced))
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal")
+                    Text("Shell").fontWeight(.semibold)
+                    Text("git status").foregroundStyle(Color(hex: palette.muted))
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                }.font(.system(.caption2, design: .monospaced)).padding(8)
+                    .background(Color(hex: palette.toolPanel ?? palette.chatPanel), in: Capsule())
+                Text("View changes").font(.caption).foregroundStyle(Color(hex: palette.link ?? palette.action))
                 HStack {
                     Text("Message your agent…").font(.system(.caption, design: .monospaced))
                         .foregroundStyle(Color(hex: palette.muted))

@@ -19,14 +19,16 @@ struct AgentConversationLink<LabelContent: View>: View {
 }
 
 struct AgentChatSheet: View {
-    let session: LiveAgentSession
+    @State private var session: LiveAgentSession
+    init(session: LiveAgentSession) { _session = State(initialValue: session) }
     var body: some View {
-        NavigationStack { AgentChatView(session: session) }
+        NavigationStack { AgentChatView(session: session, switchSession: { session = $0 }).id(session.id) }
     }
 }
 
 struct AgentChatView: View {
     let session: LiveAgentSession
+    let switchSession: (LiveAgentSession) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
@@ -41,6 +43,7 @@ struct AgentChatView: View {
     @State private var commandDestination: CommandDestination?
     @State private var showingAttachments = false
     @State private var showingDictation = false
+    @State private var showingAgentSwitcher = false
     @State private var previewImage: ChatAttachmentDraft?
     @State private var historyTask: Task<Void, Never>?
     @State private var bottomPosition: CGFloat = 0
@@ -247,6 +250,14 @@ struct AgentChatView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingAgentSwitcher) {
+            NavigationStack {
+                ChatAgentSwitcher(session: session, panes: model.panes, selectedPaneID: model.target?.paneID,
+                                  choosePane: { pane in
+                    model.choose(pane, session: session); refresh = UUID()
+                }, chooseSession: switchSession)
+            }
+        }
         .sheet(item: $previewImage) { item in
             NavigationStack {
                 if let image = UIImage(data: item.attachment.data) {
@@ -435,19 +446,20 @@ struct AgentChatView: View {
                         Image(systemName: "terminal").font(.system(size: 18)).frame(width: 44, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel("Open Herdr terminal").accessibilityIdentifier("chat-composer-terminal")
                         .disabled(model.target == nil)
+                    Button { composing = false; showingAgentSwitcher = true } label: {
+                        Image(systemName: "person.2")
+                            .font(.system(size: 18)).frame(width: 40, height: 44).contentShape(Rectangle())
+                    }.accessibilityLabel("Switch agent").accessibilityIdentifier("chat-switch-agent")
+                        .disabled(model.sending || model.answering || model.stopping)
                     Spacer(minLength: 4)
                     Button { showingDictation = true } label: {
                         Image(systemName: "mic").font(.system(size: 20)).frame(width: 40, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel("Dictate message").disabled(model.target == nil || model.sending)
-                    if selectedPane?.agentStatus == "working", !model.needsAnswer {
-                        Button { sendTask = Task { await model.stop(session) } } label: {
-                            Image(systemName: "stop.circle").font(.system(size: 21)).frame(width: 40, height: 44).contentShape(Rectangle())
-                        }.accessibilityLabel("Stop").accessibilityIdentifier("chat-stop")
-                            .disabled(!active || !model.connected || model.sending || model.stopping)
-                    }
                     Button {
                         composing = false
-                        if model.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "/", model.attachments.isEmpty {
+                        if showsStop {
+                            sendTask = Task { await model.stop(session) }
+                        } else if model.draft.trimmingCharacters(in: .whitespacesAndNewlines) == "/", model.attachments.isEmpty {
                             openCommandMenu()
                         } else {
                             let isCommand = AgentSlashCommand.isCommand(model.draft), pane = model.target?.paneID
@@ -461,13 +473,17 @@ struct AgentChatView: View {
                             }
                         }
                     } label: {
-                        if model.sending { ProgressView().frame(width: 44, height: 44) }
-                        else { Image(systemName: "arrow.up").font(.system(size: 22, weight: .semibold)).frame(width: 44, height: 44) }
+                        Group {
+                            if model.sending || model.stopping { ProgressView().tint(PhrenTheme.chatPanel) }
+                            else { Image(systemName: showsStop ? "stop.fill" : "arrow.up").font(.system(size: showsStop ? 13 : 19, weight: .semibold)) }
+                        }
+                        .frame(width: 36, height: 36)
+                        .foregroundStyle(primaryActionEnabled ? PhrenTheme.chatPanel : PhrenTheme.textDim)
+                        .background(primaryActionEnabled ? PhrenTheme.cyan : PhrenTheme.borderStrong, in: Circle())
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
                     }
-                    .foregroundStyle(canSend ? PhrenTheme.chatPanel : PhrenTheme.textDim)
-                    .background(canSend ? PhrenTheme.cyan : PhrenTheme.borderStrong, in: Circle())
-                    .disabled(!canSend)
-                    .accessibilityLabel("Send message").accessibilityIdentifier("chat-send")
+                    .disabled(!primaryActionEnabled)
+                    .accessibilityLabel(showsStop ? "Stop" : "Send message").accessibilityIdentifier(showsStop ? "chat-stop" : "chat-send")
                     .accessibilityValue(model.deliveryStatus ?? "")
                     .keyboardShortcut(.return, modifiers: .command)
                 }
@@ -490,6 +506,13 @@ struct AgentChatView: View {
         commandDestination = .init(paneID: target.paneID, menu: true)
     }
     private struct RunIdentity: Equatable { let active: Bool; let refresh: UUID }
+    private var showsStop: Bool {
+        !model.needsAnswer && (selectedPane?.agentStatus == "working" || model.liveActivity == "working" || model.awaitingReply || model.progress.phase == .working)
+            && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.attachments.isEmpty
+    }
+    private var primaryActionEnabled: Bool {
+        showsStop ? active && model.connected && !model.sending && !model.stopping && !model.answering : canSend
+    }
     private var canSend: Bool {
         active && model.connected && !model.sending && !model.stopping && !model.answering && !model.needsAnswer && model.approval == nil
             && (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.attachments.isEmpty)

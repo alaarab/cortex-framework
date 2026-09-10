@@ -24,12 +24,19 @@ Each compact row names its computer; tap to chat or use its info button for
 terminal and session details. Search matches computers, projects, titles, agents,
 and folders. Computer connections, Skills, and Agent instructions remain below.
 
-**Settings → Appearance → Theme** offers Midnight (black with bright purple
-text), Amethyst (deep violet), Graphite (warm charcoal), and Slate (the original
-cyan palette). Midnight is the default. Previews apply immediately, the choice
-survives relaunch, and switching themes preserves navigation and chat drafts.
-Chats use the same palette as the app and terminal, with compact spacing around
-tool activity and the bottom composer.
+**Settings → Appearance → Theme** offers Charcoal (white text, dark panels,
+green controls), Amethyst (deep violet), Graphite (warm charcoal), and Slate
+(cyan and lavender). Charcoal is the default. Create a named custom theme from
+any preset or your current palette, then choose background, text, panel, accent,
+and link colors with swatches or hex values. Preview before saving; edit,
+duplicate, or delete saved themes. Choices persist across launches and apply
+throughout the app and terminal while preserving navigation and chat drafts.
+
+Chat uses compact tool activity and a full-width composer. Its smaller Send
+control becomes Stop while an agent works and the draft is empty; typing a new
+message brings Send back so you can steer the agent. **Switch agent**, beside
+Terminal, opens conversations across saved computers and agents within the
+current tab. Each conversation keeps its own draft.
 
 **Memory maintenance**, available from Projects and Settings, is optional. Its
 overview groups candidates, stale memories, and conflicts by project and store.

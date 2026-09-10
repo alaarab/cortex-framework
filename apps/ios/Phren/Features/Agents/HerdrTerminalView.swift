@@ -282,7 +282,7 @@ struct HerdrTerminalView: View {
         }
         #endif
         .background(PhrenTheme.bgSunken).navigationTitle("Herdr terminal").navigationBarTitleDisplayMode(.inline)
-        .onChange(of: PhrenAppearance.shared.style) { _, _ in model.applyAppearance() }
+        .onChange(of: PhrenAppearance.shared.palette) { _, _ in model.applyAppearance() }
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

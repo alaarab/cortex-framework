@@ -37,7 +37,7 @@ struct SettingsView: View {
                             Image(systemName: "paintpalette").foregroundStyle(PhrenTheme.accent)
                             Text("Theme")
                             Spacer()
-                            Text(PhrenAppearance.shared.style.name).foregroundStyle(PhrenTheme.textMuted)
+                            Text(PhrenAppearance.shared.name).foregroundStyle(PhrenTheme.textMuted)
                         }
                     }.accessibilityIdentifier("settings-theme")
                 }

@@ -139,7 +139,7 @@ final class AgentChatTests: XCTestCase {
         XCTAssertTrue(group.waitForExistence(timeout: 8))
         XCTAssertEqual(group.label, "Shell, 2 operations")
         XCTAssertEqual(group.value as? String, "Collapsed")
-        XCTAssertLessThanOrEqual(group.frame.height, 46)
+        XCTAssertLessThanOrEqual(group.frame.height, 44, "The compact tool pill retains a larger accessible tap target")
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         XCTAssertFalse(app.staticTexts["All 4 timeline tests passed."].exists)
         XCTAssertFalse(app.buttons["Latest messages"].exists, "A settled conversation already at the bottom does not need a jump button")
@@ -389,13 +389,47 @@ final class AgentChatTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchAgentAcrossComputersPreservesSeparateDrafts() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing", "--automatic-sessions-fixture", "--all-sessions-fixture", "--native-chat-fixture"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Agents"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Agents"].tap()
+        let macID = "A1000000-0000-0000-0000-000000000001:herdr:default:w1:w1:t1"
+        let linuxID = "A1000000-0000-0000-0000-000000000002:herdr:default:w1:w1:t1"
+        let session = app.buttons["overview-chat:\(macID)"]
+        XCTAssertTrue(session.waitForExistence(timeout: 8)); session.tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-composer").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap(); composer.typeText("Mac draft")
+        app.buttons["chat-switch-agent"].tap()
+        let linux = app.buttons["switch-session:\(linuxID)"]
+        XCTAssertTrue(linux.waitForExistence(timeout: 8)); linux.tap()
+        XCTAssertTrue(app.staticTexts["chat-location"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Linux"))
+        XCTAssertNotEqual(composer.value as? String, "Mac draft")
+        composer.tap(); composer.typeText("Linux draft")
+        app.buttons["chat-switch-agent"].tap()
+        let mac = app.buttons["switch-session:\(macID)"]
+        XCTAssertTrue(mac.waitForExistence(timeout: 8)); mac.tap()
+        let restored = NSPredicate { _, _ in composer.value as? String == "Mac draft" }
+        expectation(for: restored, evaluatedWith: nil)
+        waitForExpectations(timeout: 8)
+        XCTAssertTrue(app.staticTexts["chat-location"].label.contains("Test Mac"))
+        capture(app, "Switched back to Mac with draft intact")
+    }
+
+    @MainActor
     func testStopAndCodeCardsWorkInsideChat() {
         let app = launch(extra: ["--chat-working", "--chat-markdown"])
         app.buttons["live-chat:w7:w7:t9"].tap()
         XCTAssertTrue(app.buttons["chat-stop"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["chat-send"].exists, "Stop occupies the send control")
         app.buttons["Copy code"].tap()
         app.buttons["chat-stop"].tap()
         XCTAssertTrue(app.staticTexts["Turn stopped in the selected pane."].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["chat-send"].exists)
+        XCTAssertFalse(app.buttons["chat-stop"].exists)
         capture(app, "Native code card and stopped turn")
     }
 

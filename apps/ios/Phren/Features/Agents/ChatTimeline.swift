@@ -59,8 +59,8 @@ struct ChatToolActivity: View {
             Button {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { expanded.toggle() }
             } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: summary.icon).foregroundStyle(PhrenTheme.textDim).frame(width: 17)
+                HStack(spacing: 7) {
+                    Image(systemName: summary.icon).foregroundStyle(PhrenTheme.textDim).frame(width: 14)
                     Text(summary.title).fontWeight(.semibold).foregroundStyle(PhrenTheme.textSecondary).lineLimit(1)
                     if summary.count > 1 { Text("×\(summary.count)").foregroundStyle(PhrenTheme.textDim) }
                     Text(summary.preview).foregroundStyle(PhrenTheme.textMuted).lineLimit(1).truncationMode(.middle)
@@ -68,8 +68,9 @@ struct ChatToolActivity: View {
                     Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
                         .rotationEffect(.degrees(expanded ? 180 : 0)).foregroundStyle(PhrenTheme.textDim)
                 }
-                .font(.system(.caption, design: .monospaced))
-                .padding(.horizontal, 14).frame(minHeight: 44).contentShape(Rectangle())
+                .font(.system(.caption2, design: .monospaced))
+                .padding(.horizontal, 12).padding(.vertical, 4).frame(minHeight: 34)
+                .contentShape(Rectangle().inset(by: -5))
             }.buttonStyle(.plain)
                 .accessibilityLabel("\(summary.title), \(summary.count) \(summary.count == 1 ? "operation" : "operations")")
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
@@ -94,7 +95,7 @@ struct ChatToolActivity: View {
                 }.padding(.horizontal, 14).padding(.bottom, 14)
             }
         }
-        .background(PhrenTheme.chatPanel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(PhrenTheme.border, lineWidth: 1))
+        .background(PhrenTheme.toolPanel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(PhrenTheme.border, lineWidth: 0.5))
     }
 }
